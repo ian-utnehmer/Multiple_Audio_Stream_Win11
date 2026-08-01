@@ -21,8 +21,8 @@ DEFAULT_SAMPLE_RATE = 48000
 DEFAULT_BLOCK_SIZE = 512
 DEVICE_REFRESH_MS = 1500
 LIVE_RESTART_MS = 75
-APP_OUTPUT_QUEUE_BLOCKS = 1
-STARTUP_DISCARD_SECONDS = 0.08
+OUTPUT_QUEUE_BLOCKS = 1
+STARTUP_DISCARD_SECONDS = 0.12
 MAX_VOLUME = 5.0
 ERROR_LOG = Path(__file__).with_name("audio_splitter_error.log")
 ICON_PATH = Path(__file__).with_name("assets") / "audio_splitter.ico"
@@ -78,8 +78,7 @@ class AudioRouter:
         self.frames_routed = 0
         self._thread: threading.Thread | None = None
         self._output_threads: list[threading.Thread] = []
-        self.output_queue_blocks = APP_OUTPUT_QUEUE_BLOCKS
-        self.output_handoff_timeout = self._handoff_timeout(sample_rate, block_size)
+        self.output_queue_blocks = OUTPUT_QUEUE_BLOCKS
         self._output_queues: list[queue.Queue[object]] = [
             queue.Queue(maxsize=self.output_queue_blocks) for _route in self.output_routes
         ]
@@ -113,7 +112,6 @@ class AudioRouter:
             import numpy as np
             import soundcard as sc
 
-            self._configure_realtime_thread()
             self._initialize_com_for_thread(sc)
             source = sc.get_microphone(id=self.source.id, include_loopback=self.source.is_loopback)
             capture_channels = self._usable_channels(self.source.channels)
@@ -126,14 +124,14 @@ class AudioRouter:
             ) as recorder:
                 self._discard_startup_audio(recorder)
                 while not self.stop_event.is_set():
-                    data = recorder.record(numframes=self.block_size)
+                    data = recorder.record(numframes=None)
                     if data.size == 0:
                         time.sleep(0.001)
                         continue
 
                     self.level = float(min(1.0, math.sqrt(float(np.mean(np.square(data)))) * 4.0))
                     self.peak = float(min(1.0, np.max(np.abs(data))))
-                    self._enqueue_audio(data)
+                    self._enqueue_latest(data)
                     self.frames_routed += int(data.shape[0])
         except Exception:
             self._report_error(traceback.format_exc())
@@ -161,7 +159,6 @@ class AudioRouter:
         try:
             import soundcard as sc
 
-            self._configure_realtime_thread()
             self._initialize_com_for_thread(sc)
             speaker = sc.get_speaker(device.id)
             channels = self._usable_channels(device.channels)
@@ -179,45 +176,43 @@ class AudioRouter:
                     if item is None:
                         break
 
+                    item = self._drain_to_latest(output_queue, item)
                     player.play(self._for_output(item, channels, self._volume_for(output_index)))
         except Exception:
             if not self.stop_event.is_set():
                 self._report_error(f"Output {output_index + 1} failed:\n{traceback.format_exc()}")
             self.stop_event.set()
 
-    def _enqueue_audio(self, data: object) -> None:
+    def _enqueue_latest(self, data: object) -> None:
         for route, output_queue in zip(self.output_routes, self._output_queues):
             if not route.device.is_none:
-                self._put_realtime(output_queue, data)
+                self._put_latest(output_queue, data)
 
-    def _put_realtime(self, output_queue: queue.Queue[object], data: object) -> None:
-        try:
-            output_queue.put(data, timeout=self.output_handoff_timeout)
-            return
-        except queue.Full:
-            pass
+    def _put_latest(self, output_queue: queue.Queue[object], data: object) -> None:
+        while True:
+            try:
+                pending = output_queue.get_nowait()
+            except queue.Empty:
+                break
+            if pending is not None:
+                self.skipped_blocks += 1
 
-        if not self._drop_oldest_pending(output_queue):
-            return
         try:
             output_queue.put_nowait(data)
         except queue.Full:
             self.skipped_blocks += 1
 
-    def _drop_oldest_pending(self, output_queue: queue.Queue[object]) -> bool:
-        try:
-            pending = output_queue.get_nowait()
-        except queue.Empty:
-            return True
-        if pending is None:
-            self.stop_event.set()
+    def _drain_to_latest(self, output_queue: queue.Queue[object], item: object) -> object:
+        while True:
             try:
-                output_queue.put_nowait(None)
-            except queue.Full:
-                pass
-            return False
-        self.skipped_blocks += 1
-        return True
+                newer_item = output_queue.get_nowait()
+            except queue.Empty:
+                return item
+            if newer_item is None:
+                self.stop_event.set()
+                return item
+            item = newer_item
+            self.skipped_blocks += 1
 
     def _signal_outputs_to_stop(self) -> None:
         for output_queue in self._output_queues:
@@ -240,7 +235,7 @@ class AudioRouter:
         deadline = time.perf_counter() + STARTUP_DISCARD_SECONDS
         while not self.stop_event.is_set() and time.perf_counter() < deadline:
             try:
-                recorder.record(numframes=self.block_size)
+                recorder.record(numframes=None)
             except Exception:
                 return
 
@@ -265,33 +260,12 @@ class AudioRouter:
         return None
 
     @staticmethod
-    def _configure_realtime_thread() -> None:
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes
-
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            winmm = ctypes.WinDLL("winmm", use_last_error=True)
-            winmm.timeBeginPeriod(1)
-            kernel32.SetThreadPriority(kernel32.GetCurrentThread(), 2)
-        except Exception:
-            pass
-
-    @staticmethod
     def _usable_channels(channels: int) -> int:
         try:
             count = int(channels)
         except Exception:
             return 2
         return 1 if count <= 1 else 2
-
-    @staticmethod
-    def _handoff_timeout(sample_rate: int, block_size: int) -> float:
-        if sample_rate <= 0 or block_size <= 0:
-            return 0.005
-        block_seconds = block_size / sample_rate
-        return max(0.002, min(0.012, block_seconds))
 
     @staticmethod
     def _read_volume(volume: tk.DoubleVar) -> float:

@@ -7,7 +7,7 @@ It has one unified release with two modes:
 - **No-driver mode:** the default path. Capture an existing Windows playback device through WASAPI loopback and mirror it to as many additional outputs as your PC can handle.
 - **Optional-driver mode:** installs a locally built virtual endpoint named `Splitter Output` so Windows, games, or individual apps can choose that endpoint directly.
 
-The main audio engine is designed to stay current: it reads fixed-size loopback blocks, hands only one block at a time to each output, resyncs instead of building app-side delay, and applies per-output volume changes immediately.
+The main audio engine is designed to stay current: it reads the newest available loopback audio, keeps only the latest pending block for each output, and applies per-output volume changes immediately.
 
 The default interface is a React control surface served by a local Python host. The same host owns the Windows audio routing engine, so the UI can update device choices, volumes, and routing state without replacing the low-latency audio path. A native CustomTkinter fallback is also included.
 
@@ -30,7 +30,7 @@ This app also came from frustration with the driver-heavy setup and cleanup proc
 - Refresh devices in the background without rebuilding selectors unless the actual device list changes.
 - Stop routing if a selected device disappears.
 - Use a modern React UI with styled scrollbars, segmented controls, and responsive routing controls.
-- Avoid app-side backlog with a one-block live handoff per output.
+- Avoid app-side backlog by keeping only the newest pending block per output.
 - Provide a no-driver default mode for the cleanest day-to-day use.
 - Provide an optional virtual driver mode for a selectable Windows endpoint named `Splitter Output`.
 
@@ -149,7 +149,7 @@ Tuning:
 - Bluetooth devices add hardware/codec delay that software cannot remove.
 - Avoid selecting the same physical device as both the capture source and an additional output.
 
-The app uses a one-block live handoff per output instead of a deep software buffer. It never intentionally queues a long backlog. If an output device cannot accept the next block in time, the pending block is dropped as a resync so playback stays current instead of becoming seconds late.
+The app uses one queue slot per output and keeps only the newest pending audio block. This avoids building a long software backlog. If an output falls behind, older pending audio is dropped so playback stays current instead of becoming seconds late.
 
 ## Volume Behavior
 
