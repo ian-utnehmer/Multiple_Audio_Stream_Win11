@@ -116,6 +116,7 @@ After installation:
 - `Allow output back into the captured source device`: disables the feedback protection guard for testing.
 - `Refresh Devices`: manually refreshes the device list.
 - `Install Optional Driver`: starts the optional virtual-driver setup.
+- Main workspace and output rows are scrollable when the window is smaller or many outputs are added.
 
 ## Latency And Audio Quality
 

@@ -312,6 +312,7 @@ class AudioSplitterApp(tk.Tk):
         self.device_signature: tuple[tuple[str, str, bool, bool], ...] = ()
         self.live_restart_after_id: str | None = None
         self.output_rows: list[OutputRow] = []
+        self.active_scroll_canvas: tk.Canvas | None = None
 
         self.source_var = tk.StringVar()
         self.master_volume_var = tk.DoubleVar(value=100)
@@ -375,6 +376,22 @@ class AudioSplitterApp(tk.Tk):
         style.map("Primary.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#2563eb"), ("!disabled", "#1d4ed8")])
         style.map("Action.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#0f766e"), ("!disabled", "#0d9488")])
         style.map("Danger.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#b91c1c"), ("!disabled", "#dc2626")])
+        style.configure(
+            "App.Vertical.TScrollbar",
+            background="#94a3b8",
+            troughcolor="#e2e8f0",
+            bordercolor="#e2e8f0",
+            arrowcolor="#334155",
+            darkcolor="#64748b",
+            lightcolor="#cbd5e1",
+            relief="flat",
+            width=14,
+        )
+        style.map(
+            "App.Vertical.TScrollbar",
+            background=[("active", "#64748b"), ("pressed", "#475569"), ("!disabled", "#94a3b8")],
+            arrowcolor=[("active", "#0f172a"), ("!disabled", "#334155")],
+        )
         style.configure("Level.Horizontal.TProgressbar", troughcolor="#e2e8f0", background="#22c55e", bordercolor="#e2e8f0", lightcolor="#22c55e", darkcolor="#16a34a")
 
         shell = ttk.Frame(self, style="Shell.TFrame")
@@ -393,8 +410,34 @@ class AudioSplitterApp(tk.Tk):
         ttk.Button(header, text="Refresh Devices", style="Quiet.TButton", command=lambda: self.refresh_devices(silent=False)).pack(side="right", padx=(8, 0))
         ttk.Button(header, text="Install Optional Driver", style="Quiet.TButton", command=self._install_optional_driver).pack(side="right")
 
-        root = ttk.Frame(shell, style="Shell.TFrame", padding=18)
-        root.pack(fill="both", expand=True)
+        content_area = ttk.Frame(shell, style="Shell.TFrame")
+        content_area.pack(fill="both", expand=True)
+        self.main_canvas = tk.Canvas(content_area, bg="#edf2f7", highlightthickness=0)
+        main_scrollbar = ttk.Scrollbar(
+            content_area,
+            orient="vertical",
+            command=self.main_canvas.yview,
+            style="App.Vertical.TScrollbar",
+        )
+        root = ttk.Frame(self.main_canvas, style="Shell.TFrame", padding=18)
+        self.main_frame_id = self.main_canvas.create_window((0, 0), window=root, anchor="nw")
+        self.main_canvas.configure(yscrollcommand=main_scrollbar.set)
+        self.main_canvas.pack(side="left", fill="both", expand=True)
+        main_scrollbar.pack(side="right", fill="y", padx=(0, 4), pady=8)
+        root.bind(
+            "<Configure>",
+            lambda _event: self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all")),
+        )
+        self.main_canvas.bind(
+            "<Configure>",
+            lambda event: self.main_canvas.itemconfigure(self.main_frame_id, width=event.width),
+        )
+        self._activate_scroll_canvas(self.main_canvas)
+        self.main_canvas.bind("<Enter>", lambda _event: self._activate_scroll_canvas(self.main_canvas))
+        root.bind("<Enter>", lambda _event: self._activate_scroll_canvas(self.main_canvas))
+        self.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.bind_all("<Button-4>", self._on_mousewheel)
+        self.bind_all("<Button-5>", self._on_mousewheel)
 
         devices, devices_content = self._section(
             root,
@@ -417,12 +460,17 @@ class AudioSplitterApp(tk.Tk):
         outputs_body = ttk.Frame(outputs_content, style="Card.TFrame")
         outputs_body.pack(fill="both", expand=True)
         self.outputs_canvas = tk.Canvas(outputs_body, bg="#ffffff", highlightthickness=0, height=210)
-        outputs_scrollbar = ttk.Scrollbar(outputs_body, orient="vertical", command=self.outputs_canvas.yview)
+        outputs_scrollbar = ttk.Scrollbar(
+            outputs_body,
+            orient="vertical",
+            command=self.outputs_canvas.yview,
+            style="App.Vertical.TScrollbar",
+        )
         self.outputs_frame = ttk.Frame(self.outputs_canvas, style="Card.TFrame")
         self.outputs_frame_id = self.outputs_canvas.create_window((0, 0), window=self.outputs_frame, anchor="nw")
         self.outputs_canvas.configure(yscrollcommand=outputs_scrollbar.set)
         self.outputs_canvas.pack(side="left", fill="both", expand=True)
-        outputs_scrollbar.pack(side="right", fill="y")
+        outputs_scrollbar.pack(side="right", fill="y", padx=(6, 0))
         self.outputs_frame.bind(
             "<Configure>",
             lambda _event: self.outputs_canvas.configure(scrollregion=self.outputs_canvas.bbox("all")),
@@ -431,7 +479,9 @@ class AudioSplitterApp(tk.Tk):
             "<Configure>",
             lambda event: self.outputs_canvas.itemconfigure(self.outputs_frame_id, width=event.width),
         )
-        self.outputs_canvas.bind_all("<MouseWheel>", self._on_outputs_mousewheel)
+        self.outputs_canvas.bind("<Enter>", lambda _event: self._activate_scroll_canvas(self.outputs_canvas))
+        self.outputs_frame.bind("<Enter>", lambda _event: self._activate_scroll_canvas(self.outputs_canvas))
+        self.outputs_canvas.bind("<Leave>", lambda _event: self._activate_scroll_canvas(self.main_canvas))
 
         settings, settings_content = self._section(
             root,
@@ -483,8 +533,8 @@ class AudioSplitterApp(tk.Tk):
             pady=(8, 0),
         )
 
-        bottom = ttk.Frame(root, style="Status.TFrame", padding=(14, 12))
-        bottom.pack(fill="x")
+        bottom = ttk.Frame(shell, style="Status.TFrame", padding=(14, 12))
+        bottom.pack(fill="x", padx=18, pady=(0, 18))
         self.start_button = ttk.Button(bottom, text="Start", style="Primary.TButton", command=self.toggle_router)
         self.start_button.pack(side="left")
         ttk.Progressbar(
@@ -601,10 +651,23 @@ class AudioSplitterApp(tk.Tk):
             row.label.configure(text=f"Output {index}")
             row.remove_button.configure(state="disabled" if len(self.output_rows) <= 1 else "normal")
 
-    def _on_outputs_mousewheel(self, event: tk.Event) -> None:
-        if not hasattr(self, "outputs_canvas"):
+    def _activate_scroll_canvas(self, canvas: tk.Canvas) -> None:
+        self.active_scroll_canvas = canvas
+
+    def _on_mousewheel(self, event: tk.Event) -> str | None:
+        canvas = self.active_scroll_canvas
+        if canvas is None:
             return
-        self.outputs_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        if getattr(event, "num", None) == 4:
+            direction = -1
+        elif getattr(event, "num", None) == 5:
+            direction = 1
+        else:
+            direction = int(-1 * (event.delta / 120))
+            if direction == 0 and event.delta != 0:
+                direction = -1 if event.delta > 0 else 1
+        canvas.yview_scroll(direction, "units")
+        return "break"
 
     def refresh_devices(self, silent: bool = False) -> bool:
         try:
