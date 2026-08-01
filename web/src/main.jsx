@@ -207,7 +207,7 @@ function App() {
             <div style={meterStyle} />
           </div>
           <p>{state?.status}</p>
-          {state?.routing.queueBlocks > 0 && <span>Jitter buffer: {state.routing.queueBlocks} block(s)</span>}
+          {state?.routing.queueBlocks > 0 && <span>Live handoff: {state.routing.queueBlocks} block</span>}
           {state?.routing.resyncBlocks > 0 && <span>{state.routing.resyncBlocks} resync block(s)</span>}
         </div>
 

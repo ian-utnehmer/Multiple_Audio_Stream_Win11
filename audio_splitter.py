@@ -18,12 +18,11 @@ import customtkinter as ctk
 APP_TITLE = "Audio Splitter"
 APP_USER_MODEL_ID = "AudioSplitter.App"
 DEFAULT_SAMPLE_RATE = 48000
-DEFAULT_BLOCK_SIZE = 256
+DEFAULT_BLOCK_SIZE = 512
 DEVICE_REFRESH_MS = 1500
 LIVE_RESTART_MS = 75
-TARGET_QUEUE_LATENCY_SECONDS = 0.03
-MAX_OUTPUT_QUEUE_BLOCKS = 6
-STARTUP_DISCARD_SECONDS = 0.04
+APP_OUTPUT_QUEUE_BLOCKS = 1
+STARTUP_DISCARD_SECONDS = 0.08
 MAX_VOLUME = 5.0
 ERROR_LOG = Path(__file__).with_name("audio_splitter_error.log")
 ICON_PATH = Path(__file__).with_name("assets") / "audio_splitter.ico"
@@ -79,7 +78,8 @@ class AudioRouter:
         self.frames_routed = 0
         self._thread: threading.Thread | None = None
         self._output_threads: list[threading.Thread] = []
-        self.output_queue_blocks = self._queue_block_count(sample_rate, block_size)
+        self.output_queue_blocks = APP_OUTPUT_QUEUE_BLOCKS
+        self.output_handoff_timeout = self._handoff_timeout(sample_rate, block_size)
         self._output_queues: list[queue.Queue[object]] = [
             queue.Queue(maxsize=self.output_queue_blocks) for _route in self.output_routes
         ]
@@ -113,6 +113,7 @@ class AudioRouter:
             import numpy as np
             import soundcard as sc
 
+            self._configure_realtime_thread()
             self._initialize_com_for_thread(sc)
             source = sc.get_microphone(id=self.source.id, include_loopback=self.source.is_loopback)
             capture_channels = self._usable_channels(self.source.channels)
@@ -160,6 +161,7 @@ class AudioRouter:
         try:
             import soundcard as sc
 
+            self._configure_realtime_thread()
             self._initialize_com_for_thread(sc)
             speaker = sc.get_speaker(device.id)
             channels = self._usable_channels(device.channels)
@@ -190,7 +192,7 @@ class AudioRouter:
 
     def _put_realtime(self, output_queue: queue.Queue[object], data: object) -> None:
         try:
-            output_queue.put_nowait(data)
+            output_queue.put(data, timeout=self.output_handoff_timeout)
             return
         except queue.Full:
             pass
@@ -263,6 +265,20 @@ class AudioRouter:
         return None
 
     @staticmethod
+    def _configure_realtime_thread() -> None:
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            winmm = ctypes.WinDLL("winmm", use_last_error=True)
+            winmm.timeBeginPeriod(1)
+            kernel32.SetThreadPriority(kernel32.GetCurrentThread(), 2)
+        except Exception:
+            pass
+
+    @staticmethod
     def _usable_channels(channels: int) -> int:
         try:
             count = int(channels)
@@ -271,11 +287,11 @@ class AudioRouter:
         return 1 if count <= 1 else 2
 
     @staticmethod
-    def _queue_block_count(sample_rate: int, block_size: int) -> int:
+    def _handoff_timeout(sample_rate: int, block_size: int) -> float:
         if sample_rate <= 0 or block_size <= 0:
-            return 3
-        target_blocks = math.ceil((sample_rate * TARGET_QUEUE_LATENCY_SECONDS) / block_size)
-        return max(1, min(MAX_OUTPUT_QUEUE_BLOCKS, target_blocks))
+            return 0.005
+        block_seconds = block_size / sample_rate
+        return max(0.002, min(0.012, block_seconds))
 
     @staticmethod
     def _read_volume(volume: tk.DoubleVar) -> float:
