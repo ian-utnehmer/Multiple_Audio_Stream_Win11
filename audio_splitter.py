@@ -35,24 +35,34 @@ class DeviceChoice:
     is_none: bool = False
 
 
+@dataclass
+class OutputRow:
+    frame: ttk.Frame
+    device_var: tk.StringVar
+    volume_var: tk.DoubleVar
+    value_label: ttk.Label
+    combo: ttk.Combobox
+    remove_button: ttk.Button
+
+
+@dataclass(frozen=True)
+class OutputRoute:
+    device: DeviceChoice
+    volume_var: tk.DoubleVar
+
+
 class AudioRouter:
     def __init__(
         self,
         source: DeviceChoice,
-        output_a: DeviceChoice,
-        output_b: DeviceChoice,
+        output_routes: list[OutputRoute],
         sample_rate: int,
         block_size: int,
-        volume_a: tk.DoubleVar,
-        volume_b: tk.DoubleVar,
     ) -> None:
         self.source = source
-        self.output_a = output_a
-        self.output_b = output_b
+        self.output_routes = output_routes
         self.sample_rate = sample_rate
         self.block_size = block_size
-        self.volume_a = volume_a
-        self.volume_b = volume_b
         self.stop_event = threading.Event()
         self.error_queue: queue.Queue[str] = queue.Queue()
         self.level = 0.0
@@ -61,11 +71,11 @@ class AudioRouter:
         self.frames_routed = 0
         self._thread: threading.Thread | None = None
         self._output_threads: list[threading.Thread] = []
-        self._queue_a: queue.Queue[object] = queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS)
-        self._queue_b: queue.Queue[object] = queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS)
+        self._output_queues: list[queue.Queue[object]] = [
+            queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS) for _route in self.output_routes
+        ]
         self._volume_lock = threading.Lock()
-        self._volume_a = self._read_volume(volume_a)
-        self._volume_b = self._read_volume(volume_b)
+        self._volumes = [self._read_volume(route.volume_var) for route in self.output_routes]
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="capture-router", daemon=True)
@@ -85,8 +95,7 @@ class AudioRouter:
 
     def set_volumes(self) -> None:
         with self._volume_lock:
-            self._volume_a = self._read_volume(self.volume_a)
-            self._volume_b = self._read_volume(self.volume_b)
+            self._volumes = [self._read_volume(route.volume_var) for route in self.output_routes]
 
     def _run(self) -> None:
         try:
@@ -122,28 +131,21 @@ class AudioRouter:
 
     def _start_output_threads(self) -> None:
         self._output_threads = []
-        if not self.output_a.is_none:
+        for index, route in enumerate(self.output_routes):
+            if route.device.is_none:
+                continue
             self._output_threads.append(
                 threading.Thread(
                     target=self._play_output,
-                    name="output-a",
-                    args=(self.output_a, self._queue_a, "A"),
-                    daemon=True,
-                )
-            )
-        if not self.output_b.is_none:
-            self._output_threads.append(
-                threading.Thread(
-                    target=self._play_output,
-                    name="output-b",
-                    args=(self.output_b, self._queue_b, "B"),
+                    name=f"output-{index + 1}",
+                    args=(index, route.device, self._output_queues[index]),
                     daemon=True,
                 )
             )
         for thread in self._output_threads:
             thread.start()
 
-    def _play_output(self, device: DeviceChoice, output_queue: queue.Queue[object], output_id: str) -> None:
+    def _play_output(self, output_index: int, device: DeviceChoice, output_queue: queue.Queue[object]) -> None:
         try:
             import soundcard as sc
 
@@ -165,17 +167,16 @@ class AudioRouter:
                         break
 
                     item = self._drain_to_latest(output_queue, item)
-                    player.play(self._for_output(item, channels, self._volume_for(output_id)))
+                    player.play(self._for_output(item, channels, self._volume_for(output_index)))
         except Exception:
             if not self.stop_event.is_set():
-                self._report_error(f"Output {output_id} failed:\n{traceback.format_exc()}")
+                self._report_error(f"Output {output_index + 1} failed:\n{traceback.format_exc()}")
             self.stop_event.set()
 
     def _enqueue_latest(self, data: object) -> None:
-        if not self.output_a.is_none:
-            self._put_latest(self._queue_a, data)
-        if not self.output_b.is_none:
-            self._put_latest(self._queue_b, data)
+        for route, output_queue in zip(self.output_routes, self._output_queues):
+            if not route.device.is_none:
+                self._put_latest(output_queue, data)
 
     def _put_latest(self, output_queue: queue.Queue[object], data: object) -> None:
         while True:
@@ -204,7 +205,7 @@ class AudioRouter:
             self.skipped_blocks += 1
 
     def _signal_outputs_to_stop(self) -> None:
-        for output_queue in (self._queue_a, self._queue_b):
+        for output_queue in self._output_queues:
             try:
                 output_queue.put_nowait(None)
             except queue.Full:
@@ -214,9 +215,11 @@ class AudioRouter:
                 except (queue.Empty, queue.Full):
                     pass
 
-    def _volume_for(self, output_id: str) -> float:
+    def _volume_for(self, output_index: int) -> float:
         with self._volume_lock:
-            return self._volume_a if output_id == "A" else self._volume_b
+            if output_index >= len(self._volumes):
+                return 1.0
+            return self._volumes[output_index]
 
     def _discard_startup_audio(self, recorder: object) -> None:
         deadline = time.perf_counter() + STARTUP_DISCARD_SECONDS
@@ -293,24 +296,20 @@ class AudioSplitterApp(tk.Tk):
         self.sources: list[DeviceChoice] = []
         self.outputs: list[DeviceChoice] = [self._none_output()]
         self.router: AudioRouter | None = None
-        self.device_signature: tuple[tuple[str, str, bool], ...] = ()
+        self.device_signature: tuple[tuple[str, str, bool, bool], ...] = ()
         self.live_restart_after_id: str | None = None
+        self.output_rows: list[OutputRow] = []
 
         self.source_var = tk.StringVar()
-        self.output_a_var = tk.StringVar(value=NONE_LABEL)
-        self.output_b_var = tk.StringVar(value=NONE_LABEL)
-        self.volume_a_var = tk.DoubleVar(value=80)
-        self.volume_b_var = tk.DoubleVar(value=80)
         self.sample_rate_var = tk.StringVar(value=str(DEFAULT_SAMPLE_RATE))
         self.block_size_var = tk.StringVar(value=str(DEFAULT_BLOCK_SIZE))
         self.allow_feedback_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Choose a loopback source and at least one additional output.")
         self.level_var = tk.DoubleVar(value=0)
 
-        self.volume_a_var.trace_add("write", lambda *_args: self._apply_live_volumes())
-        self.volume_b_var.trace_add("write", lambda *_args: self._apply_live_volumes())
-
         self._build_ui()
+        self.add_output_row(schedule_restart=False)
+        self.add_output_row(schedule_restart=False)
         self.refresh_devices()
         self.after(120, self._poll_router)
         self.after(DEVICE_REFRESH_MS, self._poll_devices)
@@ -343,13 +342,32 @@ class AudioSplitterApp(tk.Tk):
         devices = ttk.Frame(root, style="Panel.TFrame", padding=14)
         devices.pack(fill="x", pady=(0, 12))
         self._combo_row(devices, 0, "Capture loopback source", self.source_var, "source_combo")
-        self._combo_row(devices, 1, "Additional output A", self.output_a_var, "output_a_combo")
-        self._combo_row(devices, 2, "Additional output B", self.output_b_var, "output_b_combo")
 
-        volumes = ttk.Frame(root, style="Panel.TFrame", padding=14)
-        volumes.pack(fill="x", pady=(0, 12))
-        self._volume_row(volumes, 0, "Output A volume", self.volume_a_var)
-        self._volume_row(volumes, 1, "Output B volume", self.volume_b_var)
+        outputs = ttk.Frame(root, style="Panel.TFrame", padding=14)
+        outputs.pack(fill="both", expand=True, pady=(0, 12))
+        outputs_header = ttk.Frame(outputs, style="Panel.TFrame")
+        outputs_header.pack(fill="x", pady=(0, 8))
+        ttk.Label(outputs_header, text="Additional outputs", style="Panel.TLabel", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Button(outputs_header, text="Add Output", command=self.add_output_row).pack(side="right")
+
+        outputs_body = ttk.Frame(outputs, style="Panel.TFrame")
+        outputs_body.pack(fill="both", expand=True)
+        self.outputs_canvas = tk.Canvas(outputs_body, bg="#ffffff", highlightthickness=0, height=180)
+        outputs_scrollbar = ttk.Scrollbar(outputs_body, orient="vertical", command=self.outputs_canvas.yview)
+        self.outputs_frame = ttk.Frame(self.outputs_canvas, style="Panel.TFrame")
+        self.outputs_frame_id = self.outputs_canvas.create_window((0, 0), window=self.outputs_frame, anchor="nw")
+        self.outputs_canvas.configure(yscrollcommand=outputs_scrollbar.set)
+        self.outputs_canvas.pack(side="left", fill="both", expand=True)
+        outputs_scrollbar.pack(side="right", fill="y")
+        self.outputs_frame.bind(
+            "<Configure>",
+            lambda _event: self.outputs_canvas.configure(scrollregion=self.outputs_canvas.bbox("all")),
+        )
+        self.outputs_canvas.bind(
+            "<Configure>",
+            lambda event: self.outputs_canvas.itemconfigure(self.outputs_frame_id, width=event.width),
+        )
+        self.outputs_canvas.bind_all("<MouseWheel>", self._on_outputs_mousewheel)
 
         settings = ttk.Frame(root, style="Panel.TFrame", padding=14)
         settings.pack(fill="x", pady=(0, 12))
@@ -423,6 +441,81 @@ class AudioSplitterApp(tk.Tk):
         value.grid(row=row, column=2, sticky="e", padx=(12, 0), pady=8)
         parent.columnconfigure(1, weight=1)
 
+    def add_output_row(self, schedule_restart: bool = True) -> None:
+        row_number = len(self.output_rows) + 1
+        device_var = tk.StringVar(value=NONE_LABEL)
+        volume_var = tk.DoubleVar(value=80)
+        frame = ttk.Frame(self.outputs_frame, style="Panel.TFrame")
+        frame.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(frame, text=f"Output {row_number}", style="Panel.TLabel", width=10).grid(
+            row=0,
+            column=0,
+            rowspan=2,
+            sticky="w",
+            padx=(0, 12),
+        )
+        combo = ttk.Combobox(
+            frame,
+            textvariable=device_var,
+            state="readonly",
+            width=58,
+            values=[device.label for device in self.outputs],
+        )
+        combo.grid(row=0, column=1, sticky="ew", pady=(0, 6))
+        combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("output selection"))
+
+        value_label = ttk.Label(frame, text=f"{int(volume_var.get())}%", style="Panel.TLabel", width=6)
+
+        def update_value(_event=None) -> None:
+            value_label.configure(text=f"{int(volume_var.get())}%")
+            self._apply_live_volumes()
+
+        volume_var.trace_add("write", lambda *_args: self._apply_live_volumes())
+        scale = ttk.Scale(frame, variable=volume_var, from_=0, to=500, command=update_value)
+        scale.grid(row=1, column=1, sticky="ew")
+        value_label.grid(row=1, column=2, sticky="e", padx=(12, 8))
+        remove_button = ttk.Button(frame, text="Remove", command=lambda: self.remove_output_row(frame))
+        remove_button.grid(row=0, column=2, sticky="e", padx=(12, 8))
+
+        frame.columnconfigure(1, weight=1)
+        self.output_rows.append(
+            OutputRow(
+                frame=frame,
+                device_var=device_var,
+                volume_var=volume_var,
+                value_label=value_label,
+                combo=combo,
+                remove_button=remove_button,
+            )
+        )
+        self._renumber_output_rows()
+        if schedule_restart:
+            self._schedule_live_restart("output list")
+
+    def remove_output_row(self, frame: ttk.Frame) -> None:
+        if len(self.output_rows) <= 1:
+            return
+        for index, row in enumerate(self.output_rows):
+            if row.frame == frame:
+                row.frame.destroy()
+                del self.output_rows[index]
+                break
+        self._renumber_output_rows()
+        self._schedule_live_restart("output list")
+
+    def _renumber_output_rows(self) -> None:
+        for index, row in enumerate(self.output_rows, start=1):
+            label = row.frame.grid_slaves(row=0, column=0)
+            if label:
+                label[0].configure(text=f"Output {index}")
+            row.remove_button.configure(state="disabled" if len(self.output_rows) <= 1 else "normal")
+
+    def _on_outputs_mousewheel(self, event: tk.Event) -> None:
+        if not hasattr(self, "outputs_canvas"):
+            return
+        self.outputs_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
     def refresh_devices(self, silent: bool = False) -> bool:
         try:
             import soundcard as sc
@@ -443,8 +536,10 @@ class AudioSplitterApp(tk.Tk):
             return False
 
         old_source = self._selected(self.sources, self.source_var.get())
-        old_output_a = self._selected(self.outputs, self.output_a_var.get())
-        old_output_b = self._selected(self.outputs, self.output_b_var.get())
+        old_output_rows = [
+            self._selected(self.outputs, row.device_var.get())
+            for row in self.output_rows
+        ]
 
         self.sources = []
         seen_sources: set[tuple[str, bool]] = set()
@@ -482,12 +577,12 @@ class AudioSplitterApp(tk.Tk):
         self.device_signature = signature
 
         self.source_combo.configure(values=[device.label for device in self.sources])
-        self.output_a_combo.configure(values=[device.label for device in self.outputs])
-        self.output_b_combo.configure(values=[device.label for device in self.outputs])
+        for row in self.output_rows:
+            row.combo.configure(values=[device.label for device in self.outputs])
 
         self._restore_or_default(old_source, self.sources, self.source_var, self._default_source_id(default_speaker.id))
-        self._restore_or_default(old_output_a, self.outputs, self.output_a_var, None)
-        self._restore_or_default(old_output_b, self.outputs, self.output_b_var, None)
+        for old_output, row in zip(old_output_rows, self.output_rows):
+            self._restore_or_default(old_output, self.outputs, row.device_var, None)
 
         if not self.router or not self.router.is_alive():
             if changed and silent:
@@ -508,17 +603,34 @@ class AudioSplitterApp(tk.Tk):
             self.live_restart_after_id = None
 
         source = self._selected(self.sources, self.source_var.get())
-        output_a = self._selected(self.outputs, self.output_a_var.get())
-        output_b = self._selected(self.outputs, self.output_b_var.get())
-        if not source or not output_a or not output_b:
+        selected_rows = [
+            (row, self._selected(self.outputs, row.device_var.get()))
+            for row in self.output_rows
+        ]
+        if not source or any(output is None for _row, output in selected_rows):
             messagebox.showwarning(APP_TITLE, "Choose a source and output choices.")
             return False
-        if output_a.is_none and output_b.is_none:
+        routes = [
+            OutputRoute(device=output, volume_var=row.volume_var)
+            for row, output in selected_rows
+            if output and not output.is_none
+        ]
+        if not routes:
             messagebox.showwarning(APP_TITLE, "Choose at least one additional output.")
             return False
+
+        duplicate_names = self._duplicate_output_names([route.device for route in routes])
+        if duplicate_names:
+            messagebox.showwarning(
+                APP_TITLE,
+                "Each additional output should be selected only once:\n\n"
+                + "\n".join(f"- {name}" for name in duplicate_names),
+            )
+            return False
+
         if not self.allow_feedback_var.get():
-            for output in (output_a, output_b):
-                if not output.is_none and output.id == source.id:
+            for route in routes:
+                if route.device.id == source.id:
                     messagebox.showwarning(
                         APP_TITLE,
                         "That output is the same device as the loopback source.\n\n"
@@ -536,12 +648,9 @@ class AudioSplitterApp(tk.Tk):
 
         self.router = AudioRouter(
             source=source,
-            output_a=output_a,
-            output_b=output_b,
+            output_routes=routes,
             sample_rate=sample_rate,
             block_size=block_size,
-            volume_a=self.volume_a_var,
-            volume_b=self.volume_b_var,
         )
         self.router.start()
         self.start_button.configure(text="Stop")
@@ -619,9 +728,9 @@ class AudioSplitterApp(tk.Tk):
         missing = []
         if not self._contains_device(self.sources, self.router.source):
             missing.append(self.router.source.label)
-        for output in (self.router.output_a, self.router.output_b):
-            if not output.is_none and not self._contains_device(self.outputs, output):
-                missing.append(output.label)
+        for route in self.router.output_routes:
+            if not route.device.is_none and not self._contains_device(self.outputs, route.device):
+                missing.append(route.device.label)
         return missing
 
     def _on_close(self) -> None:
@@ -698,6 +807,17 @@ class AudioSplitterApp(tk.Tk):
             if source.id == default_speaker_id:
                 return source.id
         return None
+
+    @staticmethod
+    def _duplicate_output_names(devices: list[DeviceChoice]) -> list[str]:
+        seen: dict[str, str] = {}
+        duplicates: list[str] = []
+        for device in devices:
+            if device.id in seen:
+                duplicates.append(seen[device.id])
+            else:
+                seen[device.id] = device.label
+        return duplicates
 
     @staticmethod
     def _device_signature(sources: list[DeviceChoice], outputs: list[DeviceChoice]) -> tuple[tuple[str, str, bool, bool], ...]:

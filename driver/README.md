@@ -50,7 +50,7 @@ After installation:
 2. Pick `Splitter Output` as the system output or as a specific game's output.
 3. Open Audio Splitter.
 4. Select `Loopback: Splitter Output` first. If that does not carry real audio, try `Input: Splitter Input`.
-5. Select your headset and earbuds as Output A and Output B.
+5. Add one output row per real playback device you want to mirror to.
 
 ## Uninstall
 

@@ -2,7 +2,7 @@
 
 A Windows 10/11 audio splitter with one unified release:
 
-- **Default mode:** no virtual driver install. Use an existing Windows playback device as the loopback source and mirror it to one or two additional outputs.
+- **Default mode:** no virtual driver install. Use an existing Windows playback device as the loopback source and mirror it to as many additional outputs as your machine can handle.
 - **Optional driver mode:** install the branded `Splitter Output` virtual audio endpoint when you want Windows or a game to select a dedicated output device.
 
 The core audio engine is the low-latency immediate splitter: it reads currently available WASAPI loopback audio, skips stale blocks instead of drifting behind, and applies volume changes live.
@@ -25,8 +25,9 @@ This is the fastest path and does not install anything system-level:
 
 1. Set Windows or your game to output to one real device you can already hear, such as your headset.
 2. In Audio Splitter, choose that same device as `Capture loopback source`.
-3. Set `Additional output A` to the other device, such as Bluetooth earbuds.
-4. Leave the captured/source device output set to `None - source device already plays this audio`.
+3. Set an additional output row to the other device, such as Bluetooth earbuds.
+4. Click `Add Output` for any extra playback devices you want to mirror to.
+5. Leave the captured/source device output set to `None - source device already plays this audio`.
 
 Do not route back into the same device you are capturing from unless you intentionally enable the feedback checkbox. Doing so usually creates doubled, delayed, phasey audio.
 
@@ -46,7 +47,8 @@ After the driver is installed:
 
 1. Set Windows or the game to output to `Splitter Output`.
 2. In Audio Splitter, select `Loopback: Splitter Output` as the capture source.
-3. Choose the real devices as `Additional output A` and `Additional output B`.
+3. Choose each real playback device in its own additional output row.
+4. Click `Add Output` when you need more output rows.
 
 ## Latency
 
@@ -57,10 +59,11 @@ After the driver is installed:
 - The app skips stale audio blocks so it stays current instead of drifting seconds behind.
 - Volume changes apply immediately while routing.
 - Source/output/sample-rate/block-size changes automatically restart the live audio stream.
+- Adding or removing output rows also restarts the live stream automatically.
 
 ## Volume
 
-Volume sliders go up to `500%`. Boosting quiet audio can help, but already-loud audio is peak-protected to avoid hard clipping.
+Each additional output row has its own volume slider up to `500%`. Boosting quiet audio can help, but already-loud audio is peak-protected to avoid hard clipping.
 
 ## Limits
 
