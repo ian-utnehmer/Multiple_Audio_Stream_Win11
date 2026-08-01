@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 import queue
+import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -9,18 +11,18 @@ import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import messagebox, ttk
-from typing import Callable
 
 
-APP_TITLE = "Dual Output Router"
+APP_TITLE = "Audio Splitter"
 DEFAULT_SAMPLE_RATE = 48000
-DEFAULT_BLOCK_SIZE = 4096
-DEVICE_REFRESH_MS = 2000
+DEFAULT_BLOCK_SIZE = 512
+DEVICE_REFRESH_MS = 1500
 LIVE_RESTART_MS = 75
 OUTPUT_QUEUE_BLOCKS = 1
+STARTUP_DISCARD_SECONDS = 0.12
 MAX_VOLUME = 5.0
-ERROR_LOG = Path(__file__).with_name("router_error.log")
-SPLITTER_SOURCE_NAMES = ("Splitter Input", "Splitter Output")
+ERROR_LOG = Path(__file__).with_name("audio_splitter_error.log")
+NONE_LABEL = "None - source device already plays this audio"
 
 
 @dataclass(frozen=True)
@@ -29,8 +31,8 @@ class DeviceChoice:
     id: str
     name: str
     channels: int
-    kind: str
     is_loopback: bool = False
+    is_none: bool = False
 
 
 class AudioRouter:
@@ -41,60 +43,58 @@ class AudioRouter:
         output_b: DeviceChoice,
         sample_rate: int,
         block_size: int,
-        volume_a: Callable[[], float],
-        volume_b: Callable[[], float],
+        volume_a: tk.DoubleVar,
+        volume_b: tk.DoubleVar,
     ) -> None:
         self.source = source
         self.output_a = output_a
         self.output_b = output_b
         self.sample_rate = sample_rate
         self.block_size = block_size
-        self._initial_volume_a = volume_a
-        self._initial_volume_b = volume_b
+        self.volume_a = volume_a
+        self.volume_b = volume_b
         self.stop_event = threading.Event()
         self.error_queue: queue.Queue[str] = queue.Queue()
         self.level = 0.0
         self.peak = 0.0
-        self.dropped_blocks = 0
+        self.skipped_blocks = 0
         self.frames_routed = 0
         self._thread: threading.Thread | None = None
         self._output_threads: list[threading.Thread] = []
         self._queue_a: queue.Queue[object] = queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS)
         self._queue_b: queue.Queue[object] = queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS)
         self._volume_lock = threading.Lock()
-        self._volume_a = max(0.0, min(MAX_VOLUME, self._initial_volume_a()))
-        self._volume_b = max(0.0, min(MAX_VOLUME, self._initial_volume_b()))
+        self._volume_a = self._read_volume(volume_a)
+        self._volume_b = self._read_volume(volume_b)
 
     def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, name="audio-router", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="capture-router", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self.stop_event.set()
         self._signal_outputs_to_stop()
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.5)
+            self._thread.join(timeout=2.0)
         for thread in self._output_threads:
             if thread.is_alive():
-                thread.join(timeout=2.5)
+                thread.join(timeout=2.0)
 
     def is_alive(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
-    def set_volumes(self, volume_a: float, volume_b: float) -> None:
+    def set_volumes(self) -> None:
         with self._volume_lock:
-            self._volume_a = max(0.0, min(MAX_VOLUME, float(volume_a)))
-            self._volume_b = max(0.0, min(MAX_VOLUME, float(volume_b)))
+            self._volume_a = self._read_volume(self.volume_a)
+            self._volume_b = self._read_volume(self.volume_b)
 
     def _run(self) -> None:
         try:
             import numpy as np
             import soundcard as sc
 
-            thread_com = self._initialize_com_for_thread(sc)
-
+            self._initialize_com_for_thread(sc)
             source = sc.get_microphone(id=self.source.id, include_loopback=self.source.is_loopback)
-
             capture_channels = self._usable_channels(self.source.channels)
             self._start_output_threads()
 
@@ -103,15 +103,16 @@ class AudioRouter:
                 channels=capture_channels,
                 blocksize=self.block_size,
             ) as recorder:
+                self._discard_startup_audio(recorder)
                 while not self.stop_event.is_set():
-                    data = recorder.record(numframes=self.block_size)
+                    data = recorder.record(numframes=None)
                     if data.size == 0:
-                        time.sleep(0.002)
+                        time.sleep(0.001)
                         continue
 
                     self.level = float(min(1.0, math.sqrt(float(np.mean(np.square(data)))) * 4.0))
                     self.peak = float(min(1.0, np.max(np.abs(data))))
-                    self._enqueue_for_outputs(data)
+                    self._enqueue_latest(data)
                     self.frames_routed += int(data.shape[0])
         except Exception:
             self._report_error(traceback.format_exc())
@@ -120,28 +121,33 @@ class AudioRouter:
             self._signal_outputs_to_stop()
 
     def _start_output_threads(self) -> None:
-        self._output_threads = [
-            threading.Thread(
-                target=self._play_output,
-                name="audio-output-a",
-                args=(self.output_a, self._queue_a, "Output A"),
-                daemon=True,
-            ),
-            threading.Thread(
-                target=self._play_output,
-                name="audio-output-b",
-                args=(self.output_b, self._queue_b, "Output B"),
-                daemon=True,
-            ),
-        ]
+        self._output_threads = []
+        if not self.output_a.is_none:
+            self._output_threads.append(
+                threading.Thread(
+                    target=self._play_output,
+                    name="output-a",
+                    args=(self.output_a, self._queue_a, "A"),
+                    daemon=True,
+                )
+            )
+        if not self.output_b.is_none:
+            self._output_threads.append(
+                threading.Thread(
+                    target=self._play_output,
+                    name="output-b",
+                    args=(self.output_b, self._queue_b, "B"),
+                    daemon=True,
+                )
+            )
         for thread in self._output_threads:
             thread.start()
 
-    def _play_output(self, device: DeviceChoice, output_queue: queue.Queue[object], label: str) -> None:
+    def _play_output(self, device: DeviceChoice, output_queue: queue.Queue[object], output_id: str) -> None:
         try:
             import soundcard as sc
 
-            thread_com = self._initialize_com_for_thread(sc)
+            self._initialize_com_for_thread(sc)
             speaker = sc.get_speaker(device.id)
             channels = self._usable_channels(device.channels)
 
@@ -152,32 +158,24 @@ class AudioRouter:
             ) as player:
                 while not self.stop_event.is_set():
                     try:
-                        item = output_queue.get(timeout=0.2)
+                        item = output_queue.get(timeout=0.1)
                     except queue.Empty:
                         continue
                     if item is None:
                         break
 
-                    while True:
-                        try:
-                            newer_item = output_queue.get_nowait()
-                        except queue.Empty:
-                            break
-                        if newer_item is None:
-                            return
-                        item = newer_item
-                        self.dropped_blocks += 1
-
-                    volume = self._volume_for_label(label)
-                    player.play(self._for_output(item, channels, volume))
+                    item = self._drain_to_latest(output_queue, item)
+                    player.play(self._for_output(item, channels, self._volume_for(output_id)))
         except Exception:
             if not self.stop_event.is_set():
-                self._report_error(f"{label} failed:\n{traceback.format_exc()}")
+                self._report_error(f"Output {output_id} failed:\n{traceback.format_exc()}")
             self.stop_event.set()
 
-    def _enqueue_for_outputs(self, data: object) -> None:
-        self._put_latest(self._queue_a, data)
-        self._put_latest(self._queue_b, data)
+    def _enqueue_latest(self, data: object) -> None:
+        if not self.output_a.is_none:
+            self._put_latest(self._queue_a, data)
+        if not self.output_b.is_none:
+            self._put_latest(self._queue_b, data)
 
     def _put_latest(self, output_queue: queue.Queue[object], data: object) -> None:
         while True:
@@ -186,20 +184,24 @@ class AudioRouter:
             except queue.Empty:
                 break
             if stale is not None:
-                self.dropped_blocks += 1
+                self.skipped_blocks += 1
 
         try:
             output_queue.put_nowait(data)
         except queue.Full:
-            self.dropped_blocks += 1
+            self.skipped_blocks += 1
+
+    def _drain_to_latest(self, output_queue: queue.Queue[object], item: object) -> object:
+        while True:
             try:
-                output_queue.get_nowait()
+                newer_item = output_queue.get_nowait()
             except queue.Empty:
-                pass
-            try:
-                output_queue.put_nowait(data)
-            except queue.Full:
-                pass
+                return item
+            if newer_item is None:
+                self.stop_event.set()
+                return item
+            item = newer_item
+            self.skipped_blocks += 1
 
     def _signal_outputs_to_stop(self) -> None:
         for output_queue in (self._queue_a, self._queue_b):
@@ -209,14 +211,20 @@ class AudioRouter:
                 try:
                     output_queue.get_nowait()
                     output_queue.put_nowait(None)
-                except queue.Empty:
-                    pass
-                except queue.Full:
+                except (queue.Empty, queue.Full):
                     pass
 
-    def _volume_for_label(self, label: str) -> float:
+    def _volume_for(self, output_id: str) -> float:
         with self._volume_lock:
-            return self._volume_a if label == "Output A" else self._volume_b
+            return self._volume_a if output_id == "A" else self._volume_b
+
+    def _discard_startup_audio(self, recorder: object) -> None:
+        deadline = time.perf_counter() + STARTUP_DISCARD_SECONDS
+        while not self.stop_event.is_set() and time.perf_counter() < deadline:
+            try:
+                recorder.record(numframes=None)
+            except Exception:
+                return
 
     def _report_error(self, details: str) -> None:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -235,8 +243,6 @@ class AudioRouter:
             if com_library is not None:
                 return com_library()
         except Exception:
-            # The soundcard import usually initializes COM already. This is just
-            # an extra nudge for Windows worker threads.
             pass
         return None
 
@@ -246,15 +252,16 @@ class AudioRouter:
             count = int(channels)
         except Exception:
             return 2
-        if count <= 1:
-            return 1
-        return 2
+        return 1 if count <= 1 else 2
+
+    @staticmethod
+    def _read_volume(volume: tk.DoubleVar) -> float:
+        return max(0.0, min(MAX_VOLUME, float(volume.get()) / 100.0))
 
     @staticmethod
     def _for_output(data, channels: int, volume: float):
         import numpy as np
 
-        volume = max(0.0, min(MAX_VOLUME, float(volume)))
         routed = np.asarray(data, dtype="float32")
         if routed.ndim == 1:
             routed = routed[:, None]
@@ -271,34 +278,33 @@ class AudioRouter:
 
         if volume != 1.0:
             routed = routed * volume
-
         peak = float(np.max(np.abs(routed))) if routed.size else 0.0
         if peak > 1.0:
             routed = routed / peak
         return np.clip(routed, -1.0, 1.0).astype("float32", copy=False)
 
 
-class DualOutputApp(tk.Tk):
+class AudioSplitterApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.minsize(780, 540)
+        self.minsize(800, 520)
 
         self.sources: list[DeviceChoice] = []
-        self.outputs: list[DeviceChoice] = []
+        self.outputs: list[DeviceChoice] = [self._none_output()]
         self.router: AudioRouter | None = None
         self.device_signature: tuple[tuple[str, str, bool], ...] = ()
         self.live_restart_after_id: str | None = None
 
         self.source_var = tk.StringVar()
-        self.output_a_var = tk.StringVar()
-        self.output_b_var = tk.StringVar()
+        self.output_a_var = tk.StringVar(value=NONE_LABEL)
+        self.output_b_var = tk.StringVar(value=NONE_LABEL)
         self.volume_a_var = tk.DoubleVar(value=80)
         self.volume_b_var = tk.DoubleVar(value=80)
         self.sample_rate_var = tk.StringVar(value=str(DEFAULT_SAMPLE_RATE))
         self.block_size_var = tk.StringVar(value=str(DEFAULT_BLOCK_SIZE))
         self.allow_feedback_var = tk.BooleanVar(value=False)
-        self.status_var = tk.StringVar(value="Choose devices, then press Start.")
+        self.status_var = tk.StringVar(value="Choose a loopback source and at least one additional output.")
         self.level_var = tk.DoubleVar(value=0)
 
         self.volume_a_var.trace_add("write", lambda *_args: self._apply_live_volumes())
@@ -306,7 +312,7 @@ class DualOutputApp(tk.Tk):
 
         self._build_ui()
         self.refresh_devices()
-        self.after(200, self._poll_router)
+        self.after(120, self._poll_router)
         self.after(DEVICE_REFRESH_MS, self._poll_devices)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -323,7 +329,6 @@ class DualOutputApp(tk.Tk):
         style.configure("Panel.TLabel", background="#ffffff")
         style.configure("Title.TLabel", background="#f5f7fb", font=("Segoe UI", 18, "bold"))
         style.configure("Hint.TLabel", background="#ffffff", foreground="#5a6272")
-        style.configure("TButton", font=("Segoe UI", 10))
         style.configure("Start.TButton", font=("Segoe UI", 11, "bold"))
 
         root = ttk.Frame(self, padding=18)
@@ -333,17 +338,16 @@ class DualOutputApp(tk.Tk):
         top.pack(fill="x", pady=(0, 12))
         ttk.Label(top, text=APP_TITLE, style="Title.TLabel").pack(side="left")
         ttk.Button(top, text="Refresh Devices", command=lambda: self.refresh_devices(silent=False)).pack(side="right")
+        ttk.Button(top, text="Install Optional Driver", command=self._install_optional_driver).pack(side="right", padx=(0, 8))
 
         devices = ttk.Frame(root, style="Panel.TFrame", padding=14)
         devices.pack(fill="x", pady=(0, 12))
-
-        self._combo_row(devices, 0, "Windows/app output source", self.source_var, "source_combo")
-        self._combo_row(devices, 1, "Output A", self.output_a_var, "output_a_combo")
-        self._combo_row(devices, 2, "Output B", self.output_b_var, "output_b_combo")
+        self._combo_row(devices, 0, "Capture loopback source", self.source_var, "source_combo")
+        self._combo_row(devices, 1, "Additional output A", self.output_a_var, "output_a_combo")
+        self._combo_row(devices, 2, "Additional output B", self.output_b_var, "output_b_combo")
 
         volumes = ttk.Frame(root, style="Panel.TFrame", padding=14)
         volumes.pack(fill="x", pady=(0, 12))
-
         self._volume_row(volumes, 0, "Output A volume", self.volume_a_var)
         self._volume_row(volumes, 1, "Output B volume", self.volume_b_var)
 
@@ -364,7 +368,7 @@ class DualOutputApp(tk.Tk):
         self.block_size_combo = ttk.Combobox(
             settings,
             textvariable=self.block_size_var,
-            values=("1024", "2048", "4096", "8192"),
+            values=("128", "256", "512", "1024", "2048", "4096"),
             width=10,
             state="readonly",
         )
@@ -373,17 +377,17 @@ class DualOutputApp(tk.Tk):
 
         ttk.Checkbutton(
             settings,
-            text="Allow routing back into the captured output device",
+            text="Allow output back into the captured source device",
             variable=self.allow_feedback_var,
             command=lambda: self._schedule_live_restart("feedback setting"),
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         note = (
-            "For game/system audio, set Windows or the game to play into a virtual audio endpoint, "
-            "then choose that endpoint here as the source. This app routes that source to the two "
-            "real devices below."
+            "For the cleanest no-driver fallback, set Windows to play through one device you can already hear, "
+            "choose that device's Loopback source here, then route only to the other device. "
+            "Do not also route back into the captured source unless you need to test it."
         )
-        ttk.Label(settings, text=note, style="Hint.TLabel", wraplength=690).grid(
+        ttk.Label(settings, text=note, style="Hint.TLabel", wraplength=720).grid(
             row=2,
             column=0,
             columnspan=4,
@@ -419,23 +423,13 @@ class DualOutputApp(tk.Tk):
         value.grid(row=row, column=2, sticky="e", padx=(12, 0), pady=8)
         parent.columnconfigure(1, weight=1)
 
-    def _apply_live_volumes(self) -> None:
-        if self.router and self.router.is_alive():
-            self.router.set_volumes(self.volume_a_var.get() / 100.0, self.volume_b_var.get() / 100.0)
-
     def refresh_devices(self, silent: bool = False) -> bool:
         try:
             import soundcard as sc
         except Exception as exc:
-            self.status_var.set("Install dependencies first: python -m pip install -r requirements.txt")
+            self.status_var.set("Install dependencies first by running run_windows.bat.")
             if not silent:
-                messagebox.showerror(
-                    APP_TITLE,
-                    "The audio packages are not installed yet.\n\n"
-                    "Run run_windows.bat, or run:\n"
-                    "python -m pip install -r requirements.txt\n\n"
-                    f"Details: {exc}",
-                )
+                messagebox.showerror(APP_TITLE, f"Audio packages are not installed yet.\n\nDetails: {exc}")
             return False
 
         try:
@@ -452,87 +446,60 @@ class DualOutputApp(tk.Tk):
         old_output_a = self._selected(self.outputs, self.output_a_var.get())
         old_output_b = self._selected(self.outputs, self.output_b_var.get())
 
-        new_outputs = [
+        self.sources = []
+        seen_sources: set[tuple[str, bool]] = set()
+        for microphone in microphones:
+            is_loopback = bool(getattr(microphone, "isloopback", False))
+            if not is_loopback:
+                continue
+            key = (microphone.id, is_loopback)
+            if key in seen_sources:
+                continue
+            seen_sources.add(key)
+            self.sources.append(
+                DeviceChoice(
+                    label=f"Loopback: {microphone.name} ({self._channel_text(microphone.channels)})",
+                    id=microphone.id,
+                    name=microphone.name,
+                    channels=int(microphone.channels),
+                    is_loopback=True,
+                )
+            )
+
+        self.outputs = [self._none_output()]
+        self.outputs.extend(
             DeviceChoice(
                 label=f"{speaker.name} ({self._channel_text(speaker.channels)})",
                 id=speaker.id,
                 name=speaker.name,
                 channels=int(speaker.channels),
-                kind="speaker",
             )
             for speaker in speakers
-        ]
+        )
 
-        new_sources = []
-        seen_source_ids: set[tuple[str, bool]] = set()
-        for microphone in microphones:
-            is_loopback = bool(getattr(microphone, "isloopback", False))
-            key = (microphone.id, is_loopback)
-            if key in seen_source_ids:
-                continue
-            seen_source_ids.add(key)
-            prefix = "Loopback" if is_loopback else "Input"
-            new_sources.append(
-                DeviceChoice(
-                    label=f"{prefix}: {microphone.name} ({self._channel_text(microphone.channels)})",
-                    id=microphone.id,
-                    name=microphone.name,
-                    channels=int(microphone.channels),
-                    kind="microphone",
-                    is_loopback=is_loopback,
-                )
-            )
-
-        new_signature = self._device_signature(new_sources, new_outputs)
-        changed = new_signature != self.device_signature
-        self.sources = new_sources
-        self.outputs = new_outputs
-        self.device_signature = new_signature
+        signature = self._device_signature(self.sources, self.outputs)
+        changed = signature != self.device_signature
+        self.device_signature = signature
 
         self.source_combo.configure(values=[device.label for device in self.sources])
         self.output_a_combo.configure(values=[device.label for device in self.outputs])
         self.output_b_combo.configure(values=[device.label for device in self.outputs])
 
-        source_labels = [device.label for device in self.sources]
-        output_labels = [device.label for device in self.outputs]
-
-        if old_source and self._contains_device(self.sources, old_source):
-            self.source_var.set(self._matching_device(self.sources, old_source).label)
-        elif self.source_var.get() not in source_labels:
-            preferred_sources = self._preferred_splitter_sources(self.sources)
-            loopbacks = [source for source in self.sources if source.is_loopback]
-            default_loopbacks = [source for source in loopbacks if source.id == default_speaker.id]
-            choices = preferred_sources or default_loopbacks or loopbacks or self.sources
-            self.source_var.set(choices[0].label if choices else "")
-
-        if old_output_a and self._contains_device(self.outputs, old_output_a):
-            self.output_a_var.set(self._matching_device(self.outputs, old_output_a).label)
-        elif self.output_a_var.get() not in output_labels:
-            default_outputs = [output for output in self.outputs if output.id == default_speaker.id]
-            choices = default_outputs or self.outputs
-            self.output_a_var.set(choices[0].label if choices else "")
-
-        if old_output_b and self._contains_device(self.outputs, old_output_b):
-            self.output_b_var.set(self._matching_device(self.outputs, old_output_b).label)
-        elif self.output_b_var.get() not in output_labels:
-            alternate_outputs = [output for output in self.outputs if output.label != self.output_a_var.get()]
-            choices = alternate_outputs or self.outputs
-            self.output_b_var.set(choices[0].label if choices else "")
+        self._restore_or_default(old_source, self.sources, self.source_var, self._default_source_id(default_speaker.id))
+        self._restore_or_default(old_output_a, self.outputs, self.output_a_var, None)
+        self._restore_or_default(old_output_b, self.outputs, self.output_b_var, None)
 
         if not self.router or not self.router.is_alive():
             if changed and silent:
-                self.status_var.set(
-                    f"Device list updated: {len(self.sources)} source(s), {len(self.outputs)} output device(s)."
-                )
+                self.status_var.set(f"Device list updated: {len(self.sources)} loopback source(s), {len(self.outputs) - 1} output(s).")
             else:
-                self.status_var.set(f"Found {len(self.sources)} source(s) and {len(self.outputs)} output device(s).")
+                self.status_var.set(f"Found {len(self.sources)} loopback source(s) and {len(self.outputs) - 1} output device(s).")
         return True
 
     def toggle_router(self) -> None:
         if self.router and self.router.is_alive():
             self._stop_router()
             return
-
         self._start_router()
 
     def _start_router(self) -> bool:
@@ -543,21 +510,22 @@ class DualOutputApp(tk.Tk):
         source = self._selected(self.sources, self.source_var.get())
         output_a = self._selected(self.outputs, self.output_a_var.get())
         output_b = self._selected(self.outputs, self.output_b_var.get())
-
         if not source or not output_a or not output_b:
-            messagebox.showwarning(APP_TITLE, "Choose one capture source and two output devices.")
+            messagebox.showwarning(APP_TITLE, "Choose a source and output choices.")
             return False
-        if output_a.id == output_b.id:
-            messagebox.showwarning(APP_TITLE, "Output A and Output B need to be different devices.")
+        if output_a.is_none and output_b.is_none:
+            messagebox.showwarning(APP_TITLE, "Choose at least one additional output.")
             return False
-        if source.is_loopback and source.id in {output_a.id, output_b.id} and not self.allow_feedback_var.get():
-            messagebox.showwarning(
-                APP_TITLE,
-                "One destination is the same device as the loopback capture source.\n\n"
-                "That can route the app's own playback back into itself and create echo or feedback. "
-                "Use a separate capture endpoint, or enable the checkbox if you really want to test it.",
-            )
-            return False
+        if not self.allow_feedback_var.get():
+            for output in (output_a, output_b):
+                if not output.is_none and output.id == source.id:
+                    messagebox.showwarning(
+                        APP_TITLE,
+                        "That output is the same device as the loopback source.\n\n"
+                        "That usually causes doubled, phasey, fuzzy audio. Choose None for the source device, "
+                        "or enable the checkbox if you really want to test it.",
+                    )
+                    return False
 
         try:
             sample_rate = int(self.sample_rate_var.get())
@@ -572,13 +540,12 @@ class DualOutputApp(tk.Tk):
             output_b=output_b,
             sample_rate=sample_rate,
             block_size=block_size,
-            volume_a=lambda: self.volume_a_var.get() / 100.0,
-            volume_b=lambda: self.volume_b_var.get() / 100.0,
+            volume_a=self.volume_a_var,
+            volume_b=self.volume_b_var,
         )
-        self.router.set_volumes(self.volume_a_var.get() / 100.0, self.volume_b_var.get() / 100.0)
         self.router.start()
         self.start_button.configure(text="Stop")
-        self.status_var.set("Routing audio...")
+        self.status_var.set("Routing current audio...")
         return True
 
     def _stop_router(self, status: str = "Stopped.") -> None:
@@ -595,7 +562,6 @@ class DualOutputApp(tk.Tk):
     def _schedule_live_restart(self, reason: str) -> None:
         if not self.router or not self.router.is_alive():
             return
-
         self.status_var.set(f"Applying {reason}...")
         if self.live_restart_after_id:
             self.after_cancel(self.live_restart_after_id)
@@ -605,9 +571,12 @@ class DualOutputApp(tk.Tk):
         self.live_restart_after_id = None
         if not self.router or not self.router.is_alive():
             return
-
         self._stop_router(status="Restarting audio...")
         self._start_router()
+
+    def _apply_live_volumes(self) -> None:
+        if self.router and self.router.is_alive():
+            self.router.set_volumes()
 
     def _poll_router(self) -> None:
         if self.router:
@@ -625,13 +594,12 @@ class DualOutputApp(tk.Tk):
             if self.router and self.router.is_alive():
                 self.level_var.set(self.router.level * 100)
                 seconds = self.router.frames_routed / max(1, int(self.sample_rate_var.get()))
-                drop_text = f", {self.router.dropped_blocks} stale block(s) skipped" if self.router.dropped_blocks else ""
+                skip_text = f", {self.router.skipped_blocks} stale block(s) skipped" if self.router.skipped_blocks else ""
                 peak_text = ", hot input" if self.router.peak > 0.98 else ""
-                self.status_var.set(f"Routing audio... {seconds:,.1f}s processed{drop_text}{peak_text}")
+                self.status_var.set(f"Routing current audio... {seconds:,.1f}s processed{skip_text}{peak_text}")
             elif self.router:
                 self._stop_router()
-
-        self.after(200, self._poll_router)
+        self.after(120, self._poll_router)
 
     def _poll_devices(self) -> None:
         if self.refresh_devices(silent=True):
@@ -648,19 +616,44 @@ class DualOutputApp(tk.Tk):
     def _missing_active_devices(self) -> list[str]:
         if not self.router or not self.router.is_alive():
             return []
-
         missing = []
         if not self._contains_device(self.sources, self.router.source):
             missing.append(self.router.source.label)
-        if not self._contains_device(self.outputs, self.router.output_a):
-            missing.append(self.router.output_a.label)
-        if not self._contains_device(self.outputs, self.router.output_b):
-            missing.append(self.router.output_b.label)
+        for output in (self.router.output_a, self.router.output_b):
+            if not output.is_none and not self._contains_device(self.outputs, output):
+                missing.append(output.label)
         return missing
 
     def _on_close(self) -> None:
         self._stop_router()
         self.destroy()
+
+    def _install_optional_driver(self) -> None:
+        setup_script = Path(__file__).with_name("setup_windows.ps1")
+        if not setup_script.exists():
+            messagebox.showerror(APP_TITLE, "The optional driver setup script was not found.")
+            return
+
+        try:
+            subprocess.Popen(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(setup_script),
+                    "-NoStartApp",
+                ],
+                cwd=str(Path(__file__).resolve().parent),
+                creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
+            )
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, f"Could not start optional driver setup:\n\n{exc}")
+
+    @staticmethod
+    def _none_output() -> DeviceChoice:
+        return DeviceChoice(label=NONE_LABEL, id="", name=NONE_LABEL, channels=2, is_none=True)
 
     @staticmethod
     def _selected(devices: list[DeviceChoice], label: str) -> DeviceChoice | None:
@@ -668,31 +661,48 @@ class DualOutputApp(tk.Tk):
 
     @staticmethod
     def _contains_device(devices: list[DeviceChoice], target: DeviceChoice) -> bool:
-        return any(device.id == target.id and device.is_loopback == target.is_loopback for device in devices)
+        return any(
+            device.id == target.id and device.is_loopback == target.is_loopback and device.is_none == target.is_none
+            for device in devices
+        )
 
     @staticmethod
     def _matching_device(devices: list[DeviceChoice], target: DeviceChoice) -> DeviceChoice:
-        return next(device for device in devices if device.id == target.id and device.is_loopback == target.is_loopback)
+        return next(
+            device
+            for device in devices
+            if device.id == target.id and device.is_loopback == target.is_loopback and device.is_none == target.is_none
+        )
+
+    def _restore_or_default(
+        self,
+        old_device: DeviceChoice | None,
+        devices: list[DeviceChoice],
+        variable: tk.StringVar,
+        preferred_id: str | None,
+    ) -> None:
+        if old_device and self._contains_device(devices, old_device):
+            variable.set(self._matching_device(devices, old_device).label)
+            return
+        if variable.get() in [device.label for device in devices]:
+            return
+        if preferred_id:
+            matches = [device for device in devices if device.id == preferred_id]
+            if matches:
+                variable.set(matches[0].label)
+                return
+        variable.set(devices[0].label if devices else "")
+
+    def _default_source_id(self, default_speaker_id: str) -> str | None:
+        for source in self.sources:
+            if source.id == default_speaker_id:
+                return source.id
+        return None
 
     @staticmethod
-    def _device_signature(sources: list[DeviceChoice], outputs: list[DeviceChoice]) -> tuple[tuple[str, str, bool], ...]:
-        rows = [(device.id, "source", device.is_loopback) for device in sources]
-        rows.extend((device.id, "output", device.is_loopback) for device in outputs)
+    def _device_signature(sources: list[DeviceChoice], outputs: list[DeviceChoice]) -> tuple[tuple[str, str, bool, bool], ...]:
+        rows = [(device.id, device.label, device.is_loopback, device.is_none) for device in sources + outputs]
         return tuple(sorted(rows))
-
-    @staticmethod
-    def _preferred_splitter_sources(sources: list[DeviceChoice]) -> list[DeviceChoice]:
-        exact = [
-            source
-            for source in sources
-            if any(name.lower() == source.name.lower() for name in SPLITTER_SOURCE_NAMES)
-        ]
-        fuzzy = [
-            source
-            for source in sources
-            if any(name.lower() in source.name.lower() for name in SPLITTER_SOURCE_NAMES)
-        ]
-        return exact or fuzzy
 
     @staticmethod
     def _channel_text(channels: int) -> str:
@@ -700,5 +710,4 @@ class DualOutputApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = DualOutputApp()
-    app.mainloop()
+    AudioSplitterApp().mainloop()

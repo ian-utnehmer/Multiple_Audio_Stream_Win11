@@ -1,15 +1,17 @@
-# Splitter Virtual Audio Driver
+# Optional Splitter Virtual Audio Driver
 
-This folder packages a simple branded virtual audio endpoint for this project.
+This folder packages the optional virtual audio endpoint for Audio Splitter.
 
-It uses the open-source [VirtualDrivers/Virtual-Audio-Driver](https://github.com/VirtualDrivers/Virtual-Audio-Driver) project, pinned to tag `25.7.14`, and patches the installer strings so Windows shows:
+The main app does not require this driver. Use the driver only when you want Windows, a game, or another app to show a dedicated playback device named `Splitter Output`.
+
+The driver package uses the open-source [VirtualDrivers/Virtual-Audio-Driver](https://github.com/VirtualDrivers/Virtual-Audio-Driver) project, pinned to tag `25.7.14`, and patches the installer strings so Windows shows:
 
 - `Splitter Output` as the playback/output device
 - `Splitter Input` as the recording/input side
 
 ## Reality Check
 
-Windows 11 will only show `Splitter Output` as a selectable app/game output if a driver exposes that endpoint. A Python app cannot create that endpoint by itself.
+Windows 11 will only show `Splitter Output` as a selectable app/game output if a driver exposes that endpoint. A Python app can capture an existing loopback device, but it cannot create a real Windows playback endpoint by itself.
 
 This is a test-signed driver flow. That means:
 
@@ -23,43 +25,30 @@ This is not a production-signed driver package. Shipping a production driver req
 
 ## Build And Install
 
-The normal path is to run the root launcher:
+The simplest path is from the app:
+
+1. Run `run_windows.bat`.
+2. Click `Install Optional Driver`.
+3. Approve the administrator prompt.
+4. Let setup finish. If it enables test-signing, reboot and run the setup again.
+
+You can also run driver setup directly:
 
 ```bat
-run_windows.bat
+setup_windows.bat
 ```
 
-It checks for `Splitter Output`, runs this setup only when the driver is missing, caches the installed result, and then opens the UI.
-
-You can also run the driver setup manually.
-
-From a normal PowerShell:
+Or from PowerShell:
 
 ```powershell
-cd D:\SoundProject
-.\driver\Prepare-SplitterDriver.ps1
-.\driver\Build-SplitterDriver.ps1
-```
-
-From an elevated PowerShell:
-
-```powershell
-cd D:\SoundProject
-.\driver\Install-SplitterDriver.ps1 -EnableTestSigning
-```
-
-If test-signing was just enabled, reboot, then rerun:
-
-```powershell
-cd D:\SoundProject
-.\driver\Install-SplitterDriver.ps1
+.\setup_windows.ps1 -NoStartApp
 ```
 
 After installation:
 
 1. Open Windows Sound settings.
 2. Pick `Splitter Output` as the system output or as a specific game's output.
-3. Open Dual Output Router.
+3. Open Audio Splitter.
 4. Select `Loopback: Splitter Output` first. If that does not carry real audio, try `Input: Splitter Input`.
 5. Select your headset and earbuds as Output A and Output B.
 
@@ -68,10 +57,9 @@ After installation:
 From an elevated PowerShell:
 
 ```powershell
-cd D:\SoundProject
 .\driver\Uninstall-SplitterDriver.ps1
 ```
 
-## Next Driver Step
+## Driver Development Note
 
-If `Splitter Output` installs but its loopback/capture side does not carry the real game stream, the next implementation step is inside the driver: add a shared ring buffer so render frames written to `Splitter Output` are readable from `Splitter Input`. The scripts here intentionally make that work reproducible before we start deeper kernel-mode changes.
+If `Splitter Output` installs but its loopback/capture side does not carry the real game stream, the next implementation step is inside the driver: add a shared ring buffer so render frames written to `Splitter Output` are readable from `Splitter Input`.

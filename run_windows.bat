@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-if /i "%~1"=="--skip-driver-setup" goto python_setup
+if /i "%~1"=="--skip-launcher" goto python_setup
 
 where pyw >nul 2>nul
 if errorlevel 1 (
@@ -48,10 +48,10 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Starting Dual Output Router...
-start "" ".venv\Scripts\pythonw.exe" "%CD%\dual_output_router.py"
+echo Starting Audio Splitter...
+start "" ".venv\Scripts\pythonw.exe" "%CD%\audio_splitter.py"
 if errorlevel 1 (
-  echo Failed to start Dual Output Router.
+  echo Failed to start Audio Splitter.
   pause
   exit /b 1
 )

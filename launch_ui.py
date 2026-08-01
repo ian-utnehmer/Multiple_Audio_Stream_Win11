@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 
-APP_TITLE = "Dual Output Router"
+APP_TITLE = "Audio Splitter"
 ROOT = Path(__file__).resolve().parent
 LOG_FILE = ROOT / "launcher_error.log"
 VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
@@ -26,7 +26,7 @@ class Launcher(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._close_requested)
 
         self.messages: queue.Queue[tuple[str, str | None]] = queue.Queue()
-        self.stop_requested = False
+        self.cancelled = False
 
         self._build_ui()
         self.after(100, self._poll_messages)
@@ -62,53 +62,21 @@ class Launcher(tk.Tk):
 
     def _run_startup(self) -> None:
         try:
-            self._status("Checking Splitter Output driver...")
-            driver_result = self._ensure_driver()
-            if driver_result == 100:
-                self._status("Driver setup is continuing in the administrator window...")
-                time.sleep(1.5)
-                self._done()
-                return
-            if driver_result == 101:
-                self._done()
-                return
-
             self._status("Preparing Python environment...")
             self._ensure_venv()
+            self._stop_if_cancelled()
 
             self._status("Installing/updating audio dependencies...")
             self._install_requirements()
+            self._stop_if_cancelled()
 
-            self._status("Opening audio router...")
+            self._status("Opening audio splitter...")
             self._launch_app()
             self._done()
         except Exception as exc:
+            if self.cancelled:
+                return
             self._error(str(exc))
-
-    def _ensure_driver(self) -> int:
-        powershell = self._which("powershell")
-        if not powershell:
-            self._log("PowerShell was not found; skipping driver auto-setup.")
-            return 0
-
-        setup_script = ROOT / "setup_windows.ps1"
-        result = self._run(
-            [
-                powershell,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(setup_script),
-                "-FromLauncher",
-                "-EnsureDriverOnly",
-                "-StartAppWhenDone",
-            ],
-            check=False,
-        )
-        if result.returncode in (0, 100, 101):
-            return result.returncode
-        raise RuntimeError("Driver setup failed. See launcher_error.log for details.")
 
     def _ensure_venv(self) -> None:
         if VENV_PYTHON.exists() and VENV_PYTHONW.exists():
@@ -121,13 +89,13 @@ class Launcher(tk.Tk):
 
     def _launch_app(self) -> None:
         subprocess.Popen(
-            [str(VENV_PYTHONW), str(ROOT / "dual_output_router.py")],
+            [str(VENV_PYTHONW), str(ROOT / "audio_splitter.py")],
             cwd=str(ROOT),
             close_fds=True,
             creationflags=self._creation_flags(),
         )
 
-    def _run(self, args: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
+    def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             args,
             cwd=str(ROOT),
@@ -136,7 +104,7 @@ class Launcher(tk.Tk):
             creationflags=self._creation_flags(),
         )
         self._log_command(args, result)
-        if check and result.returncode != 0:
+        if result.returncode != 0:
             raise RuntimeError(f"Command failed: {' '.join(args)}")
         return result
 
@@ -167,20 +135,18 @@ class Launcher(tk.Tk):
         self.after(100, self._poll_messages)
 
     def _close_requested(self) -> None:
-        self.stop_requested = True
+        self.cancelled = True
         self.destroy()
+
+    def _stop_if_cancelled(self) -> None:
+        if self.cancelled:
+            raise RuntimeError("Launch cancelled.")
 
     @staticmethod
     def _creation_flags() -> int:
         if sys.platform == "win32":
             return subprocess.CREATE_NO_WINDOW
         return 0
-
-    @staticmethod
-    def _which(name: str) -> str | None:
-        from shutil import which
-
-        return which(name)
 
     def _log_command(self, args: list[str], result: subprocess.CompletedProcess[str]) -> None:
         command = " ".join(args)
