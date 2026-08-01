@@ -44,6 +44,8 @@ Or from PowerShell:
 .\setup_windows.ps1 -NoStartApp
 ```
 
+If MSBuild reports an `InfVerif.dll` or `ApiValidator.exe` failure after compiling the driver, rerun setup with the latest scripts. The build script first tries the normal WDK validation path, then retries without validation-only targets and creates the install package/catalog manually with `inf2cat.exe`.
+
 After installation:
 
 1. Open Windows Sound settings.

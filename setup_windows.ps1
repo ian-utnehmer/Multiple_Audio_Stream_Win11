@@ -36,13 +36,17 @@ function Restart-AsAdmin {
 function Find-MSBuild {
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
-        $found = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+        $foundPaths = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe"
+        $found = $foundPaths | Select-Object -First 1
         if ($found -and (Test-Path $found)) {
             return $found
         }
     }
 
     $candidates = @(
+        "$env:ProgramFiles\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe",
+        "$env:ProgramFiles\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\MSBuild.exe",
+        "$env:ProgramFiles\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
         "$env:ProgramFiles\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
         "$env:ProgramFiles\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
         "$env:ProgramFiles\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
@@ -74,12 +78,18 @@ function Find-WdkTool([string]$Name) {
         "$env:ProgramFiles\Windows Kits\10"
     )
 
+    $platformPatterns = @("\\x64\\", "\\x86\\", "\\arm64\\")
     foreach ($root in $roots) {
         if (Test-Path $root) {
-            $match = Get-ChildItem -Path $root -Recurse -Filter $Name -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "\\x64\\" } |
-                Sort-Object FullName -Descending |
-                Select-Object -First 1
+            $matches = Get-ChildItem -Path $root -Recurse -Filter $Name -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending
+            foreach ($pattern in $platformPatterns) {
+                $match = $matches | Where-Object { $_.FullName -match $pattern } | Select-Object -First 1
+                if ($match) {
+                    return $match.FullName
+                }
+            }
+            $match = $matches | Select-Object -First 1
             if ($match) {
                 return $match.FullName
             }
@@ -155,7 +165,7 @@ function Ensure-Git {
 }
 
 function Ensure-WdkToolchain {
-    if ((Find-MSBuild) -and (Find-WdkTool "signtool.exe") -and (Find-WdkTool "devcon.exe")) {
+    if ((Find-MSBuild) -and (Find-WdkTool "signtool.exe") -and (Find-WdkTool "devcon.exe") -and (Find-WdkTool "inf2cat.exe")) {
         Write-Host "Driver build tools found."
         return
     }
@@ -177,7 +187,7 @@ function Ensure-WdkToolchain {
 
     Invoke-Logged { winget configure -f $WdkConfigUrl } "WDK toolchain installation failed."
 
-    if (-not ((Find-MSBuild) -and (Find-WdkTool "signtool.exe") -and (Find-WdkTool "devcon.exe"))) {
+    if (-not ((Find-MSBuild) -and (Find-WdkTool "signtool.exe") -and (Find-WdkTool "devcon.exe") -and (Find-WdkTool "inf2cat.exe"))) {
         throw "WDK setup completed, but required tools still were not found. Reboot or open a fresh PowerShell, then rerun setup_windows.bat."
     }
 }
