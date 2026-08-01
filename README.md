@@ -109,6 +109,7 @@ After installation:
 - `Additional outputs`: dynamic output rows. Each row has its own playback device and volume slider.
 - `Add Output`: creates another output row.
 - `Remove`: deletes an output row.
+- `Main output volume`: master volume for the entire routed stream, from `0%` to `100%`.
 - `Output volume`: per-row volume from `0%` to `500%`.
 - `Sample rate`: `44100` or `48000` Hz.
 - `Block size`: lower values reduce software latency; higher values are more tolerant of unstable devices.
@@ -135,9 +136,13 @@ The app uses one queue per output and keeps only the newest pending audio block.
 
 ## Volume Behavior
 
+`Main output volume` is the master bus for the app. Lower it when you want every routed device to get quieter together.
+
 Each output row has an independent volume slider up to `500%`.
 
-Boosting above `100%` can help quiet streams, but it cannot recover detail from audio that is already clipped or distorted. The app applies peak protection so boosted audio does not hard-clip above full scale.
+When using the optional virtual driver, changing Windows' volume for `Splitter Output` may not affect the audio captured and mirrored by the app. Use `Main output volume` inside Audio Splitter for reliable overall routed volume control.
+
+Boosting a per-output row above `100%` can help quiet streams, but it cannot recover detail from audio that is already clipped or distorted. The app applies peak protection so boosted audio does not hard-clip above full scale.
 
 ## Device Changes
 
@@ -180,7 +185,7 @@ See [driver/README.md](driver/README.md) for the driver-specific build, install,
 
 - Do not route back into the same physical device you are capturing.
 - In no-driver mode, let the source device play normally and route only to the other devices.
-- Lower the volume if the input is already hot.
+- Lower `Main output volume` if the input is already hot.
 - Try `48000` Hz and block size `512`, then adjust from there.
 
 ### Audio is delayed

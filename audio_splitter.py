@@ -59,11 +59,13 @@ class AudioRouter:
         output_routes: list[OutputRoute],
         sample_rate: int,
         block_size: int,
+        master_volume: tk.DoubleVar,
     ) -> None:
         self.source = source
         self.output_routes = output_routes
         self.sample_rate = sample_rate
         self.block_size = block_size
+        self.master_volume = master_volume
         self.stop_event = threading.Event()
         self.error_queue: queue.Queue[str] = queue.Queue()
         self.level = 0.0
@@ -76,6 +78,7 @@ class AudioRouter:
             queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS) for _route in self.output_routes
         ]
         self._volume_lock = threading.Lock()
+        self._master_volume = self._read_master_volume(master_volume)
         self._volumes = [self._read_volume(route.volume_var) for route in self.output_routes]
 
     def start(self) -> None:
@@ -96,6 +99,7 @@ class AudioRouter:
 
     def set_volumes(self) -> None:
         with self._volume_lock:
+            self._master_volume = self._read_master_volume(self.master_volume)
             self._volumes = [self._read_volume(route.volume_var) for route in self.output_routes]
 
     def _run(self) -> None:
@@ -219,8 +223,8 @@ class AudioRouter:
     def _volume_for(self, output_index: int) -> float:
         with self._volume_lock:
             if output_index >= len(self._volumes):
-                return 1.0
-            return self._volumes[output_index]
+                return self._master_volume
+            return self._master_volume * self._volumes[output_index]
 
     def _discard_startup_audio(self, recorder: object) -> None:
         deadline = time.perf_counter() + STARTUP_DISCARD_SECONDS
@@ -263,6 +267,10 @@ class AudioRouter:
         return max(0.0, min(MAX_VOLUME, float(volume.get()) / 100.0))
 
     @staticmethod
+    def _read_master_volume(volume: tk.DoubleVar) -> float:
+        return max(0.0, min(1.0, float(volume.get()) / 100.0))
+
+    @staticmethod
     def _for_output(data, channels: int, volume: float):
         import numpy as np
 
@@ -303,11 +311,13 @@ class AudioSplitterApp(tk.Tk):
         self.output_rows: list[OutputRow] = []
 
         self.source_var = tk.StringVar()
+        self.master_volume_var = tk.DoubleVar(value=100)
         self.sample_rate_var = tk.StringVar(value=str(DEFAULT_SAMPLE_RATE))
         self.block_size_var = tk.StringVar(value=str(DEFAULT_BLOCK_SIZE))
         self.allow_feedback_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Choose a loopback source and at least one additional output.")
         self.level_var = tk.DoubleVar(value=0)
+        self.master_volume_var.trace_add("write", lambda *_args: self._apply_live_volumes())
 
         self._build_ui()
         self.add_output_row(schedule_restart=False)
@@ -411,7 +421,9 @@ class AudioSplitterApp(tk.Tk):
             "Latency and guardrails for the live audio stream.",
         )
         settings.pack(fill="x", pady=(0, 12))
-        ttk.Label(settings_content, text="Sample rate", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=6)
+        self._master_volume_row(settings_content)
+
+        ttk.Label(settings_content, text="Sample rate", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
         self.sample_rate_combo = ttk.Combobox(
             settings_content,
             textvariable=self.sample_rate_var,
@@ -419,10 +431,10 @@ class AudioSplitterApp(tk.Tk):
             width=10,
             state="readonly",
         )
-        self.sample_rate_combo.grid(row=0, column=1, sticky="w", pady=6)
+        self.sample_rate_combo.grid(row=1, column=1, sticky="w", pady=6)
         self.sample_rate_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("sample rate"))
 
-        ttk.Label(settings_content, text="Block size", style="Field.TLabel").grid(row=0, column=2, sticky="w", padx=(28, 12), pady=6)
+        ttk.Label(settings_content, text="Block size", style="Field.TLabel").grid(row=1, column=2, sticky="w", padx=(28, 12), pady=6)
         self.block_size_combo = ttk.Combobox(
             settings_content,
             textvariable=self.block_size_var,
@@ -430,7 +442,7 @@ class AudioSplitterApp(tk.Tk):
             width=10,
             state="readonly",
         )
-        self.block_size_combo.grid(row=0, column=3, sticky="w", pady=6)
+        self.block_size_combo.grid(row=1, column=3, sticky="w", pady=6)
         self.block_size_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("block size"))
 
         ttk.Checkbutton(
@@ -438,7 +450,7 @@ class AudioSplitterApp(tk.Tk):
             text="Allow output back into the captured source device",
             variable=self.allow_feedback_var,
             command=lambda: self._schedule_live_restart("feedback setting"),
-        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         note = (
             "For the cleanest no-driver fallback, set Windows to play through one device you can already hear, "
@@ -446,7 +458,7 @@ class AudioSplitterApp(tk.Tk):
             "Do not also route back into the captured source unless you need to test it."
         )
         ttk.Label(settings_content, text=note, style="Hint.TLabel", wraplength=720).grid(
-            row=2,
+            row=3,
             column=0,
             columnspan=4,
             sticky="w",
@@ -481,6 +493,25 @@ class AudioSplitterApp(tk.Tk):
         combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart(label.lower()))
         parent.columnconfigure(1, weight=1)
         setattr(self, attr_name, combo)
+
+    def _master_volume_row(self, parent: ttk.Frame) -> None:
+        value_label = ttk.Label(parent, text=f"{int(self.master_volume_var.get())}%", style="Field.TLabel", width=6)
+
+        def update_value(_event=None) -> None:
+            value_label.configure(text=f"{int(self.master_volume_var.get())}%")
+            self._apply_live_volumes()
+
+        ttk.Label(parent, text="Main output volume", style="Field.TLabel").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 12),
+            pady=(0, 10),
+        )
+        scale = ttk.Scale(parent, variable=self.master_volume_var, from_=0, to=100, command=update_value)
+        scale.grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 10))
+        value_label.grid(row=0, column=3, sticky="e", padx=(12, 0), pady=(0, 10))
+        parent.columnconfigure(1, weight=1)
 
     def add_output_row(self, schedule_restart: bool = True) -> None:
         row_number = len(self.output_rows) + 1
@@ -692,6 +723,7 @@ class AudioSplitterApp(tk.Tk):
             output_routes=routes,
             sample_rate=sample_rate,
             block_size=block_size,
+            master_volume=self.master_volume_var,
         )
         self.router.start()
         self.start_button.configure(text="Stop")
