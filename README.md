@@ -7,6 +7,12 @@ A Windows 10/11 audio splitter with one unified release:
 
 The core audio engine is the low-latency immediate splitter: it reads currently available WASAPI loopback audio, skips stale blocks instead of drifting behind, and applies volume changes live.
 
+## Motivation
+
+Windows lets you choose an output device and app volume in Volume Mixer, but it does not provide a small built-in tool for mirroring one playback stream to multiple real output devices with separate per-output volume sliders.
+
+[Voicemeeter](https://vb-audio.com/Voicemeeter/) is a powerful, actively maintained virtual mixer, and its Banana/Potato editions support multiple outputs and bus controls. This project is intentionally narrower: a lightweight splitter UI focused on quickly sending the same current audio to any number of selected outputs, each with its own instant volume control, without requiring a virtual driver unless the user explicitly wants a dedicated `Splitter Output` device.
+
 ## Run
 
 Use native Windows Python, not WSL. WSL cannot reliably see Windows audio devices.
