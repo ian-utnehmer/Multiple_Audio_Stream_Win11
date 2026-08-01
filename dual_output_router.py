@@ -14,6 +14,7 @@ from typing import Callable
 APP_TITLE = "Dual Output Router"
 DEFAULT_SAMPLE_RATE = 48000
 DEFAULT_BLOCK_SIZE = 1024
+DEVICE_REFRESH_MS = 2000
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,7 @@ class DualOutputApp(tk.Tk):
         self.sources: list[DeviceChoice] = []
         self.outputs: list[DeviceChoice] = []
         self.router: AudioRouter | None = None
+        self.device_signature: tuple[tuple[str, str, bool], ...] = ()
 
         self.source_var = tk.StringVar()
         self.output_a_var = tk.StringVar()
@@ -174,6 +176,7 @@ class DualOutputApp(tk.Tk):
         self._build_ui()
         self.refresh_devices()
         self.after(200, self._poll_router)
+        self.after(DEVICE_REFRESH_MS, self._poll_devices)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
@@ -198,12 +201,12 @@ class DualOutputApp(tk.Tk):
         top = ttk.Frame(root)
         top.pack(fill="x", pady=(0, 12))
         ttk.Label(top, text=APP_TITLE, style="Title.TLabel").pack(side="left")
-        ttk.Button(top, text="Refresh Devices", command=self.refresh_devices).pack(side="right")
+        ttk.Button(top, text="Refresh Devices", command=lambda: self.refresh_devices(silent=False)).pack(side="right")
 
         devices = ttk.Frame(root, style="Panel.TFrame", padding=14)
         devices.pack(fill="x", pady=(0, 12))
 
-        self._combo_row(devices, 0, "Capture source", self.source_var, "source_combo")
+        self._combo_row(devices, 0, "Windows/app output source", self.source_var, "source_combo")
         self._combo_row(devices, 1, "Output A", self.output_a_var, "output_a_combo")
         self._combo_row(devices, 2, "Output B", self.output_b_var, "output_b_combo")
 
@@ -238,9 +241,9 @@ class DualOutputApp(tk.Tk):
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         note = (
-            "For full two-device control, capture from a separate endpoint such as a virtual cable, "
-            "then route to the headset and earbuds. Capturing from the same device you play back into "
-            "can echo or build feedback."
+            "For game/system audio, set Windows or the game to play into a virtual audio endpoint, "
+            "then choose that endpoint here as the source. This app routes that source to the two "
+            "real devices below."
         )
         ttk.Label(settings, text=note, style="Hint.TLabel", wraplength=690).grid(
             row=2,
@@ -276,19 +279,20 @@ class DualOutputApp(tk.Tk):
         value.grid(row=row, column=2, sticky="e", padx=(12, 0), pady=8)
         parent.columnconfigure(1, weight=1)
 
-    def refresh_devices(self) -> None:
+    def refresh_devices(self, silent: bool = False) -> bool:
         try:
             import soundcard as sc
         except Exception as exc:
             self.status_var.set("Install dependencies first: python -m pip install -r requirements.txt")
-            messagebox.showerror(
-                APP_TITLE,
-                "The audio packages are not installed yet.\n\n"
-                "Run run_windows.bat, or run:\n"
-                "python -m pip install -r requirements.txt\n\n"
-                f"Details: {exc}",
-            )
-            return
+            if not silent:
+                messagebox.showerror(
+                    APP_TITLE,
+                    "The audio packages are not installed yet.\n\n"
+                    "Run run_windows.bat, or run:\n"
+                    "python -m pip install -r requirements.txt\n\n"
+                    f"Details: {exc}",
+                )
+            return False
 
         try:
             speakers = sc.all_speakers()
@@ -296,10 +300,15 @@ class DualOutputApp(tk.Tk):
             microphones = sc.all_microphones(include_loopback=True)
         except Exception as exc:
             self.status_var.set("Could not read Windows audio devices.")
-            messagebox.showerror(APP_TITLE, f"Could not read Windows audio devices:\n\n{exc}")
-            return
+            if not silent:
+                messagebox.showerror(APP_TITLE, f"Could not read Windows audio devices:\n\n{exc}")
+            return False
 
-        self.outputs = [
+        old_source = self._selected(self.sources, self.source_var.get())
+        old_output_a = self._selected(self.outputs, self.output_a_var.get())
+        old_output_b = self._selected(self.outputs, self.output_b_var.get())
+
+        new_outputs = [
             DeviceChoice(
                 label=f"{speaker.name} ({self._channel_text(speaker.channels)})",
                 id=speaker.id,
@@ -310,7 +319,7 @@ class DualOutputApp(tk.Tk):
             for speaker in speakers
         ]
 
-        self.sources = []
+        new_sources = []
         seen_source_ids: set[tuple[str, bool]] = set()
         for microphone in microphones:
             is_loopback = bool(getattr(microphone, "isloopback", False))
@@ -319,7 +328,7 @@ class DualOutputApp(tk.Tk):
                 continue
             seen_source_ids.add(key)
             prefix = "Loopback" if is_loopback else "Input"
-            self.sources.append(
+            new_sources.append(
                 DeviceChoice(
                     label=f"{prefix}: {microphone.name} ({self._channel_text(microphone.channels)})",
                     id=microphone.id,
@@ -330,6 +339,12 @@ class DualOutputApp(tk.Tk):
                 )
             )
 
+        new_signature = self._device_signature(new_sources, new_outputs)
+        changed = new_signature != self.device_signature
+        self.sources = new_sources
+        self.outputs = new_outputs
+        self.device_signature = new_signature
+
         self.source_combo.configure(values=[device.label for device in self.sources])
         self.output_a_combo.configure(values=[device.label for device in self.outputs])
         self.output_b_combo.configure(values=[device.label for device in self.outputs])
@@ -337,21 +352,36 @@ class DualOutputApp(tk.Tk):
         source_labels = [device.label for device in self.sources]
         output_labels = [device.label for device in self.outputs]
 
-        if self.source_var.get() not in source_labels:
+        if old_source and self._contains_device(self.sources, old_source):
+            self.source_var.set(self._matching_device(self.sources, old_source).label)
+        elif self.source_var.get() not in source_labels:
             loopbacks = [source for source in self.sources if source.is_loopback]
             default_loopbacks = [source for source in loopbacks if source.id == default_speaker.id]
             choices = default_loopbacks or loopbacks or self.sources
             self.source_var.set(choices[0].label if choices else "")
-        if self.output_a_var.get() not in output_labels:
+
+        if old_output_a and self._contains_device(self.outputs, old_output_a):
+            self.output_a_var.set(self._matching_device(self.outputs, old_output_a).label)
+        elif self.output_a_var.get() not in output_labels:
             default_outputs = [output for output in self.outputs if output.id == default_speaker.id]
             choices = default_outputs or self.outputs
             self.output_a_var.set(choices[0].label if choices else "")
-        if self.output_b_var.get() not in output_labels:
+
+        if old_output_b and self._contains_device(self.outputs, old_output_b):
+            self.output_b_var.set(self._matching_device(self.outputs, old_output_b).label)
+        elif self.output_b_var.get() not in output_labels:
             alternate_outputs = [output for output in self.outputs if output.label != self.output_a_var.get()]
             choices = alternate_outputs or self.outputs
             self.output_b_var.set(choices[0].label if choices else "")
 
-        self.status_var.set(f"Found {len(self.sources)} capture source(s) and {len(self.outputs)} output device(s).")
+        if not self.router or not self.router.is_alive():
+            if changed and silent:
+                self.status_var.set(
+                    f"Device list updated: {len(self.sources)} source(s), {len(self.outputs)} output device(s)."
+                )
+            else:
+                self.status_var.set(f"Found {len(self.sources)} source(s) and {len(self.outputs)} output device(s).")
+        return True
 
     def toggle_router(self) -> None:
         if self.router and self.router.is_alive():
@@ -422,6 +452,31 @@ class DualOutputApp(tk.Tk):
 
         self.after(200, self._poll_router)
 
+    def _poll_devices(self) -> None:
+        if self.refresh_devices(silent=True):
+            missing = self._missing_active_devices()
+            if missing:
+                self._stop_router()
+                messagebox.showwarning(
+                    APP_TITLE,
+                    "Routing stopped because a selected device disappeared:\n\n"
+                    + "\n".join(f"- {name}" for name in missing),
+                )
+        self.after(DEVICE_REFRESH_MS, self._poll_devices)
+
+    def _missing_active_devices(self) -> list[str]:
+        if not self.router or not self.router.is_alive():
+            return []
+
+        missing = []
+        if not self._contains_device(self.sources, self.router.source):
+            missing.append(self.router.source.label)
+        if not self._contains_device(self.outputs, self.router.output_a):
+            missing.append(self.router.output_a.label)
+        if not self._contains_device(self.outputs, self.router.output_b):
+            missing.append(self.router.output_b.label)
+        return missing
+
     def _on_close(self) -> None:
         self._stop_router()
         self.destroy()
@@ -429,6 +484,20 @@ class DualOutputApp(tk.Tk):
     @staticmethod
     def _selected(devices: list[DeviceChoice], label: str) -> DeviceChoice | None:
         return next((device for device in devices if device.label == label), None)
+
+    @staticmethod
+    def _contains_device(devices: list[DeviceChoice], target: DeviceChoice) -> bool:
+        return any(device.id == target.id and device.is_loopback == target.is_loopback for device in devices)
+
+    @staticmethod
+    def _matching_device(devices: list[DeviceChoice], target: DeviceChoice) -> DeviceChoice:
+        return next(device for device in devices if device.id == target.id and device.is_loopback == target.is_loopback)
+
+    @staticmethod
+    def _device_signature(sources: list[DeviceChoice], outputs: list[DeviceChoice]) -> tuple[tuple[str, str, bool], ...]:
+        rows = [(device.id, "source", device.is_loopback) for device in sources]
+        rows.extend((device.id, "output", device.is_loopback) for device in outputs)
+        return tuple(sorted(rows))
 
     @staticmethod
     def _channel_text(channels: int) -> str:
