@@ -16,7 +16,7 @@ APP_TITLE = "Dual Output Router"
 DEFAULT_SAMPLE_RATE = 48000
 DEFAULT_BLOCK_SIZE = 4096
 DEVICE_REFRESH_MS = 2000
-OUTPUT_QUEUE_BLOCKS = 8
+OUTPUT_QUEUE_BLOCKS = 1
 MAX_VOLUME = 5.0
 ERROR_LOG = Path(__file__).with_name("router_error.log")
 SPLITTER_SOURCE_NAMES = ("Splitter Input", "Splitter Output")
@@ -157,6 +157,16 @@ class AudioRouter:
                     if item is None:
                         break
 
+                    while True:
+                        try:
+                            newer_item = output_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        if newer_item is None:
+                            return
+                        item = newer_item
+                        self.dropped_blocks += 1
+
                     volume = self._volume_for_label(label)
                     player.play(self._for_output(item, channels, volume))
         except Exception:
@@ -169,6 +179,14 @@ class AudioRouter:
         self._put_latest(self._queue_b, data)
 
     def _put_latest(self, output_queue: queue.Queue[object], data: object) -> None:
+        while True:
+            try:
+                stale = output_queue.get_nowait()
+            except queue.Empty:
+                break
+            if stale is not None:
+                self.dropped_blocks += 1
+
         try:
             output_queue.put_nowait(data)
         except queue.Full:
@@ -255,7 +273,7 @@ class AudioRouter:
 
         peak = float(np.max(np.abs(routed))) if routed.size else 0.0
         if peak > 1.0:
-            routed = np.tanh(routed)
+            routed = routed / peak
         return np.clip(routed, -1.0, 1.0).astype("float32", copy=False)
 
 
@@ -562,7 +580,7 @@ class DualOutputApp(tk.Tk):
                 self.router.set_volumes(self.volume_a_var.get() / 100.0, self.volume_b_var.get() / 100.0)
                 self.level_var.set(self.router.level * 100)
                 seconds = self.router.frames_routed / max(1, int(self.sample_rate_var.get()))
-                drop_text = f", {self.router.dropped_blocks} dropped block(s)" if self.router.dropped_blocks else ""
+                drop_text = f", {self.router.dropped_blocks} stale block(s) skipped" if self.router.dropped_blocks else ""
                 peak_text = ", hot input" if self.router.peak > 0.98 else ""
                 self.status_var.set(f"Routing audio... {seconds:,.1f}s processed{drop_text}{peak_text}")
             elif self.router:

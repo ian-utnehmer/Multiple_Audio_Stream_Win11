@@ -9,8 +9,8 @@ A small Windows Python app that captures an audio stream and plays it to two dif
 - Control each routed output's volume separately.
 - Keep the device lists current while the app is open.
 - Stop routing with a warning if a selected device disconnects.
-- Route each output through its own playback worker so one slow device is less likely to distort the other.
-- Boost each output up to 500%, with soft limiting when the boosted signal would clip.
+- Route each output through its own playback worker and skip stale audio blocks so output stays live instead of drifting behind.
+- Boost each output up to 500%, with clean peak protection when the boosted signal would clip.
 - Run without a custom audio driver.
 
 ## Important Windows audio note
@@ -66,7 +66,7 @@ py -3 -m venv .venv
 
 - Start with `48000` sample rate and `4096` block size.
 - If audio crackles, try block size `8192`. Smaller blocks reduce latency, but `512` is intentionally not offered because it is usually too unstable for this routing approach.
-- The app allows output volume up to 500%. Boosting above 100% can still sound compressed or fuzzy if the source audio is already loud.
-- If the status line says `dropped block(s)`, try a larger block size or disconnect/reconnect the Bluetooth device.
+- The app allows output volume up to 500%. Boosting above 100% cannot make already-full-scale audio cleaner, so very loud sources may not get much louder.
+- If the status line says `stale block(s) skipped`, the app is staying live by discarding delayed audio. Try a larger block size or reconnect the Bluetooth device if you hear gaps.
 - Bluetooth devices add latency. Two Bluetooth devices may drift slightly over time because each has its own hardware clock.
 - Some DRM-protected app audio may not appear in loopback capture.
