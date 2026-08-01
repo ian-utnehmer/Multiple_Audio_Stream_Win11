@@ -46,6 +46,8 @@ Or from PowerShell:
 
 If MSBuild reports an `InfVerif.dll` or `ApiValidator.exe` failure after compiling the driver, rerun setup with the latest scripts. The build script first tries the normal WDK validation path, then retries without validation-only targets and creates the install package/catalog manually with `inf2cat.exe`.
 
+If setup says the package was built but test-signing could not be enabled, Secure Boot is usually still enabled. Windows will not load locally test-signed kernel drivers while Secure Boot blocks test-signing mode. Disable Secure Boot in UEFI/BIOS, boot back into Windows, then rerun setup.
+
 After installation:
 
 1. Open Windows Sound settings.

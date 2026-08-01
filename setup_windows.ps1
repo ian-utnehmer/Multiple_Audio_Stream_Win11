@@ -13,6 +13,7 @@ $Root = Split-Path -Parent $PSCommandPath
 $WdkConfigUrl = "https://raw.githubusercontent.com/microsoft/Windows-driver-samples/main/_wdk_utils/winget/configs/wdk-vscommunity.dsc.yaml"
 $CacheDir = Join-Path $Root "driver\.cache"
 $DriverCacheFile = Join-Path $CacheDir "splitter-driver-installed.json"
+$DriverPackageDir = Join-Path $Root "driver\work\Virtual-Audio-Driver\x64\Release\package"
 $SplitterHardwareId = "ROOT\SplitterAudioCable"
 
 function Test-Admin {
@@ -197,6 +198,21 @@ function Test-TestSigning {
     return $output -match "(?im)^\s*testsigning\s+Yes\s*$"
 }
 
+function Get-SecureBootStatus {
+    try {
+        if (Get-Command Confirm-SecureBootUEFI -ErrorAction SilentlyContinue) {
+            if (Confirm-SecureBootUEFI) {
+                return "enabled"
+            }
+            return "disabled"
+        }
+    } catch {
+        return "unknown"
+    }
+
+    return "unknown"
+}
+
 function Ensure-TestSigning {
     if (Test-TestSigning) {
         Write-Host "Windows test-signing mode is already enabled."
@@ -204,9 +220,44 @@ function Ensure-TestSigning {
     }
 
     Write-Host "Enabling Windows test-signing mode for the locally built driver..."
-    & bcdedit /set testsigning on
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not enable test-signing mode. If Secure Boot is enabled, Windows may block test-signed drivers until Secure Boot is disabled."
+    $bcdeditOutput = & bcdedit /set testsigning on 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        Write-DriverCache "built-needs-test-signing"
+        $secureBootStatus = Get-SecureBootStatus
+        $message = @(
+            "The driver package was built successfully, but Windows refused to enable test-signing mode.",
+            "",
+            "Package ready at:",
+            "  $DriverPackageDir",
+            "",
+            "Because this optional driver is locally test-signed, Windows must be in test-signing mode before it can be installed."
+        )
+
+        if ($secureBootStatus -eq "enabled") {
+            $message += @(
+                "",
+                "Secure Boot appears to be enabled. Windows blocks test-signing mode while Secure Boot is enabled.",
+                "Disable Secure Boot in your PC's UEFI/BIOS settings, boot back into Windows, then rerun setup_windows.bat or click Install Optional Driver again."
+            )
+        } elseif ($secureBootStatus -eq "disabled") {
+            $message += @(
+                "",
+                "Secure Boot appears to be disabled, so bcdedit may have been blocked by boot policy, BitLocker recovery protection, or another Windows security policy."
+            )
+        } else {
+            $message += @(
+                "",
+                "If Secure Boot is enabled, disable it in your PC's UEFI/BIOS settings, boot back into Windows, then rerun setup_windows.bat or click Install Optional Driver again."
+            )
+        }
+
+        $details = ($bcdeditOutput | Out-String).Trim()
+        if ($details) {
+            $message += @("", "bcdedit output:", $details)
+        }
+
+        throw ($message -join "`n")
     }
 
     Write-Host ""
@@ -219,6 +270,7 @@ function Install-SplitterDriver {
     try {
         & "$Root\driver\Prepare-SplitterDriver.ps1"
         & "$Root\driver\Build-SplitterDriver.ps1"
+        Write-DriverCache "built"
 
         $rebootNeeded = Ensure-TestSigning
         if ($rebootNeeded) {
