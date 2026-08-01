@@ -25,12 +25,18 @@ function Find-Tool([string]$Name) {
         "${env:ProgramFiles(x86)}\Windows Kits\10",
         "$env:ProgramFiles\Windows Kits\10"
     )
+    $platformPatterns = @("\\x64\\", "\\x86\\", "\\arm64\\")
     foreach ($root in $roots) {
         if (Test-Path $root) {
-            $match = Get-ChildItem -Path $root -Recurse -Filter $Name -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "\\x64\\" } |
-                Sort-Object FullName -Descending |
-                Select-Object -First 1
+            $matches = Get-ChildItem -Path $root -Recurse -Filter $Name -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending
+            foreach ($pattern in $platformPatterns) {
+                $match = $matches | Where-Object { $_.FullName -match $pattern } | Select-Object -First 1
+                if ($match) {
+                    return $match.FullName
+                }
+            }
+            $match = $matches | Select-Object -First 1
             if ($match) {
                 return $match.FullName
             }

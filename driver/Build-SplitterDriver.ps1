@@ -91,8 +91,12 @@ function Invoke-DriverBuild([string]$MSBuild, [string]$Solution, [bool]$SkipVali
         $args += "/p:ApiValidator_Enable=false"
     }
 
-    & $MSBuild @args
-    return $LASTEXITCODE
+    & $MSBuild @args 2>&1 | ForEach-Object { Write-Host $_ }
+    $exitCode = $LASTEXITCODE
+    if ($null -eq $exitCode) {
+        return 0
+    }
+    return [int]$exitCode
 }
 
 function Ensure-DriverPackage([string]$PackageDir, [string]$BuildOutputDir) {
