@@ -38,6 +38,7 @@ class DeviceChoice:
 @dataclass
 class OutputRow:
     frame: ttk.Frame
+    label: ttk.Label
     device_var: tk.StringVar
     volume_var: tk.DoubleVar
     value_label: ttk.Label
@@ -291,7 +292,8 @@ class AudioSplitterApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.minsize(800, 520)
+        self.geometry("980x700")
+        self.minsize(900, 640)
 
         self.sources: list[DeviceChoice] = []
         self.outputs: list[DeviceChoice] = [self._none_output()]
@@ -316,45 +318,79 @@ class AudioSplitterApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
-        self.configure(bg="#f5f7fb")
+        self.configure(bg="#edf2f7")
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("TFrame", background="#f5f7fb")
-        style.configure("Panel.TFrame", background="#ffffff", relief="solid", borderwidth=1)
-        style.configure("TLabel", background="#f5f7fb", foreground="#202532", font=("Segoe UI", 10))
-        style.configure("Panel.TLabel", background="#ffffff")
-        style.configure("Title.TLabel", background="#f5f7fb", font=("Segoe UI", 18, "bold"))
-        style.configure("Hint.TLabel", background="#ffffff", foreground="#5a6272")
-        style.configure("Start.TButton", font=("Segoe UI", 11, "bold"))
+        style.configure("TFrame", background="#edf2f7")
+        style.configure("Shell.TFrame", background="#edf2f7")
+        style.configure("Header.TFrame", background="#111827")
+        style.configure("Card.TFrame", background="#ffffff", relief="solid", borderwidth=1)
+        style.configure("OutputRow.TFrame", background="#f8fafc", relief="solid", borderwidth=1)
+        style.configure("Status.TFrame", background="#ffffff", relief="solid", borderwidth=1)
+        style.configure("TLabel", background="#edf2f7", foreground="#1f2937", font=("Segoe UI", 10))
+        style.configure("HeaderTitle.TLabel", background="#111827", foreground="#f9fafb", font=("Segoe UI", 21, "bold"))
+        style.configure("HeaderSub.TLabel", background="#111827", foreground="#cbd5e1", font=("Segoe UI", 10))
+        style.configure("CardTitle.TLabel", background="#ffffff", foreground="#111827", font=("Segoe UI", 12, "bold"))
+        style.configure("CardSub.TLabel", background="#ffffff", foreground="#64748b", font=("Segoe UI", 9))
+        style.configure("Field.TLabel", background="#ffffff", foreground="#334155", font=("Segoe UI", 9, "bold"))
+        style.configure("Hint.TLabel", background="#ffffff", foreground="#64748b", font=("Segoe UI", 9))
+        style.configure("Row.TLabel", background="#f8fafc", foreground="#334155", font=("Segoe UI", 10, "bold"))
+        style.configure("RowValue.TLabel", background="#f8fafc", foreground="#0f172a", font=("Segoe UI", 10, "bold"))
+        style.configure("Status.TLabel", background="#ffffff", foreground="#475569", font=("Segoe UI", 10))
+        style.configure("Primary.TButton", font=("Segoe UI", 11, "bold"), padding=(16, 8))
+        style.configure("Action.TButton", font=("Segoe UI", 9, "bold"), padding=(12, 7))
+        style.configure("Quiet.TButton", font=("Segoe UI", 9), padding=(10, 6))
+        style.configure("Danger.TButton", font=("Segoe UI", 9), padding=(10, 5))
+        style.map("Primary.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#2563eb"), ("!disabled", "#1d4ed8")])
+        style.map("Action.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#0f766e"), ("!disabled", "#0d9488")])
+        style.map("Danger.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#b91c1c"), ("!disabled", "#dc2626")])
+        style.configure("Level.Horizontal.TProgressbar", troughcolor="#e2e8f0", background="#22c55e", bordercolor="#e2e8f0", lightcolor="#22c55e", darkcolor="#16a34a")
 
-        root = ttk.Frame(self, padding=18)
+        shell = ttk.Frame(self, style="Shell.TFrame")
+        shell.pack(fill="both", expand=True)
+
+        header = ttk.Frame(shell, style="Header.TFrame", padding=(22, 18))
+        header.pack(fill="x")
+        title_block = ttk.Frame(header, style="Header.TFrame")
+        title_block.pack(side="left", fill="x", expand=True)
+        ttk.Label(title_block, text=APP_TITLE, style="HeaderTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            title_block,
+            text="Mirror one live Windows audio stream to multiple outputs with independent volume.",
+            style="HeaderSub.TLabel",
+        ).pack(anchor="w", pady=(3, 0))
+        ttk.Button(header, text="Refresh Devices", style="Quiet.TButton", command=lambda: self.refresh_devices(silent=False)).pack(side="right", padx=(8, 0))
+        ttk.Button(header, text="Install Optional Driver", style="Quiet.TButton", command=self._install_optional_driver).pack(side="right")
+
+        root = ttk.Frame(shell, style="Shell.TFrame", padding=18)
         root.pack(fill="both", expand=True)
 
-        top = ttk.Frame(root)
-        top.pack(fill="x", pady=(0, 12))
-        ttk.Label(top, text=APP_TITLE, style="Title.TLabel").pack(side="left")
-        ttk.Button(top, text="Refresh Devices", command=lambda: self.refresh_devices(silent=False)).pack(side="right")
-        ttk.Button(top, text="Install Optional Driver", command=self._install_optional_driver).pack(side="right", padx=(0, 8))
-
-        devices = ttk.Frame(root, style="Panel.TFrame", padding=14)
+        devices, devices_content = self._section(
+            root,
+            "Capture",
+            "Choose the live loopback stream that Audio Splitter should mirror.",
+        )
         devices.pack(fill="x", pady=(0, 12))
-        self._combo_row(devices, 0, "Capture loopback source", self.source_var, "source_combo")
+        self._combo_row(devices_content, 0, "Loopback source", self.source_var, "source_combo")
 
-        outputs = ttk.Frame(root, style="Panel.TFrame", padding=14)
+        outputs, outputs_content = self._section(
+            root,
+            "Additional Outputs",
+            "Add one row per playback device. Each row has its own live volume.",
+        )
         outputs.pack(fill="both", expand=True, pady=(0, 12))
-        outputs_header = ttk.Frame(outputs, style="Panel.TFrame")
-        outputs_header.pack(fill="x", pady=(0, 8))
-        ttk.Label(outputs_header, text="Additional outputs", style="Panel.TLabel", font=("Segoe UI", 10, "bold")).pack(side="left")
-        ttk.Button(outputs_header, text="Add Output", command=self.add_output_row).pack(side="right")
+        outputs_header = ttk.Frame(outputs_content, style="Card.TFrame")
+        outputs_header.pack(fill="x", pady=(0, 10))
+        ttk.Button(outputs_header, text="Add Output", style="Action.TButton", command=self.add_output_row).pack(side="right")
 
-        outputs_body = ttk.Frame(outputs, style="Panel.TFrame")
+        outputs_body = ttk.Frame(outputs_content, style="Card.TFrame")
         outputs_body.pack(fill="both", expand=True)
-        self.outputs_canvas = tk.Canvas(outputs_body, bg="#ffffff", highlightthickness=0, height=180)
+        self.outputs_canvas = tk.Canvas(outputs_body, bg="#ffffff", highlightthickness=0, height=210)
         outputs_scrollbar = ttk.Scrollbar(outputs_body, orient="vertical", command=self.outputs_canvas.yview)
-        self.outputs_frame = ttk.Frame(self.outputs_canvas, style="Panel.TFrame")
+        self.outputs_frame = ttk.Frame(self.outputs_canvas, style="Card.TFrame")
         self.outputs_frame_id = self.outputs_canvas.create_window((0, 0), window=self.outputs_frame, anchor="nw")
         self.outputs_canvas.configure(yscrollcommand=outputs_scrollbar.set)
         self.outputs_canvas.pack(side="left", fill="both", expand=True)
@@ -369,43 +405,47 @@ class AudioSplitterApp(tk.Tk):
         )
         self.outputs_canvas.bind_all("<MouseWheel>", self._on_outputs_mousewheel)
 
-        settings = ttk.Frame(root, style="Panel.TFrame", padding=14)
+        settings, settings_content = self._section(
+            root,
+            "Routing Settings",
+            "Latency and guardrails for the live audio stream.",
+        )
         settings.pack(fill="x", pady=(0, 12))
-        ttk.Label(settings, text="Sample rate", style="Panel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
+        ttk.Label(settings_content, text="Sample rate", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=6)
         self.sample_rate_combo = ttk.Combobox(
-            settings,
+            settings_content,
             textvariable=self.sample_rate_var,
             values=("44100", "48000"),
             width=10,
             state="readonly",
         )
-        self.sample_rate_combo.grid(row=0, column=1, sticky="w", pady=4)
+        self.sample_rate_combo.grid(row=0, column=1, sticky="w", pady=6)
         self.sample_rate_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("sample rate"))
 
-        ttk.Label(settings, text="Block size", style="Panel.TLabel").grid(row=0, column=2, sticky="w", padx=(24, 12), pady=4)
+        ttk.Label(settings_content, text="Block size", style="Field.TLabel").grid(row=0, column=2, sticky="w", padx=(28, 12), pady=6)
         self.block_size_combo = ttk.Combobox(
-            settings,
+            settings_content,
             textvariable=self.block_size_var,
             values=("128", "256", "512", "1024", "2048", "4096"),
             width=10,
             state="readonly",
         )
-        self.block_size_combo.grid(row=0, column=3, sticky="w", pady=4)
+        self.block_size_combo.grid(row=0, column=3, sticky="w", pady=6)
         self.block_size_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("block size"))
 
         ttk.Checkbutton(
-            settings,
+            settings_content,
             text="Allow output back into the captured source device",
             variable=self.allow_feedback_var,
             command=lambda: self._schedule_live_restart("feedback setting"),
-        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         note = (
             "For the cleanest no-driver fallback, set Windows to play through one device you can already hear, "
             "choose that device's Loopback source here, then route only to the other device. "
             "Do not also route back into the captured source unless you need to test it."
         )
-        ttk.Label(settings, text=note, style="Hint.TLabel", wraplength=720).grid(
+        ttk.Label(settings_content, text=note, style="Hint.TLabel", wraplength=720).grid(
             row=2,
             column=0,
             columnspan=4,
@@ -413,42 +453,44 @@ class AudioSplitterApp(tk.Tk):
             pady=(8, 0),
         )
 
-        bottom = ttk.Frame(root)
+        bottom = ttk.Frame(root, style="Status.TFrame", padding=(14, 12))
         bottom.pack(fill="x")
-        self.start_button = ttk.Button(bottom, text="Start", style="Start.TButton", command=self.toggle_router)
+        self.start_button = ttk.Button(bottom, text="Start", style="Primary.TButton", command=self.toggle_router)
         self.start_button.pack(side="left")
-        ttk.Progressbar(bottom, variable=self.level_var, maximum=100, length=180).pack(side="left", padx=(14, 10))
-        ttk.Label(bottom, textvariable=self.status_var).pack(side="left", fill="x", expand=True)
+        ttk.Progressbar(
+            bottom,
+            variable=self.level_var,
+            maximum=100,
+            length=210,
+            style="Level.Horizontal.TProgressbar",
+        ).pack(side="left", padx=(14, 12))
+        ttk.Label(bottom, textvariable=self.status_var, style="Status.TLabel").pack(side="left", fill="x", expand=True)
+
+    def _section(self, parent: ttk.Frame, title: str, subtitle: str) -> tuple[ttk.Frame, ttk.Frame]:
+        section = ttk.Frame(parent, style="Card.TFrame", padding=16)
+        ttk.Label(section, text=title, style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(section, text=subtitle, style="CardSub.TLabel").pack(anchor="w", pady=(2, 12))
+        content = ttk.Frame(section, style="Card.TFrame")
+        content.pack(fill="both", expand=True)
+        return section, content
 
     def _combo_row(self, parent: ttk.Frame, row: int, label: str, var: tk.StringVar, attr_name: str) -> None:
-        ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
-        combo = ttk.Combobox(parent, textvariable=var, state="readonly", width=88)
+        ttk.Label(parent, text=label, style="Field.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 14), pady=6)
+        combo = ttk.Combobox(parent, textvariable=var, state="readonly", width=82)
         combo.grid(row=row, column=1, sticky="ew", pady=6)
         combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart(label.lower()))
         parent.columnconfigure(1, weight=1)
         setattr(self, attr_name, combo)
 
-    def _volume_row(self, parent: ttk.Frame, row: int, label: str, var: tk.DoubleVar) -> None:
-        value = ttk.Label(parent, text=f"{int(var.get())}%", style="Panel.TLabel", width=6)
-
-        def update_value(_event=None) -> None:
-            value.configure(text=f"{int(var.get())}%")
-            self._apply_live_volumes()
-
-        ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=8)
-        scale = ttk.Scale(parent, variable=var, from_=0, to=500, command=update_value)
-        scale.grid(row=row, column=1, sticky="ew", pady=8)
-        value.grid(row=row, column=2, sticky="e", padx=(12, 0), pady=8)
-        parent.columnconfigure(1, weight=1)
-
     def add_output_row(self, schedule_restart: bool = True) -> None:
         row_number = len(self.output_rows) + 1
         device_var = tk.StringVar(value=NONE_LABEL)
         volume_var = tk.DoubleVar(value=80)
-        frame = ttk.Frame(self.outputs_frame, style="Panel.TFrame")
-        frame.pack(fill="x", pady=(0, 8))
+        frame = ttk.Frame(self.outputs_frame, style="OutputRow.TFrame", padding=(12, 10))
+        frame.pack(fill="x", padx=(0, 8), pady=(0, 10))
 
-        ttk.Label(frame, text=f"Output {row_number}", style="Panel.TLabel", width=10).grid(
+        label = ttk.Label(frame, text=f"Output {row_number}", style="Row.TLabel", width=10)
+        label.grid(
             row=0,
             column=0,
             rowspan=2,
@@ -465,7 +507,7 @@ class AudioSplitterApp(tk.Tk):
         combo.grid(row=0, column=1, sticky="ew", pady=(0, 6))
         combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("output selection"))
 
-        value_label = ttk.Label(frame, text=f"{int(volume_var.get())}%", style="Panel.TLabel", width=6)
+        value_label = ttk.Label(frame, text=f"{int(volume_var.get())}%", style="RowValue.TLabel", width=6)
 
         def update_value(_event=None) -> None:
             value_label.configure(text=f"{int(volume_var.get())}%")
@@ -475,13 +517,14 @@ class AudioSplitterApp(tk.Tk):
         scale = ttk.Scale(frame, variable=volume_var, from_=0, to=500, command=update_value)
         scale.grid(row=1, column=1, sticky="ew")
         value_label.grid(row=1, column=2, sticky="e", padx=(12, 8))
-        remove_button = ttk.Button(frame, text="Remove", command=lambda: self.remove_output_row(frame))
+        remove_button = ttk.Button(frame, text="Remove", style="Danger.TButton", command=lambda: self.remove_output_row(frame))
         remove_button.grid(row=0, column=2, sticky="e", padx=(12, 8))
 
         frame.columnconfigure(1, weight=1)
         self.output_rows.append(
             OutputRow(
                 frame=frame,
+                label=label,
                 device_var=device_var,
                 volume_var=volume_var,
                 value_label=value_label,
@@ -506,9 +549,7 @@ class AudioSplitterApp(tk.Tk):
 
     def _renumber_output_rows(self) -> None:
         for index, row in enumerate(self.output_rows, start=1):
-            label = row.frame.grid_slaves(row=0, column=0)
-            if label:
-                label[0].configure(text=f"Output {index}")
+            row.label.configure(text=f"Output {index}")
             row.remove_button.configure(state="disabled" if len(self.output_rows) <= 1 else "normal")
 
     def _on_outputs_mousewheel(self, event: tk.Event) -> None:
