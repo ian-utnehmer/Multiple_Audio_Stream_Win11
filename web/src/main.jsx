@@ -62,8 +62,31 @@ function App() {
   const [error, setError] = useState("");
   const pollRef = useRef(null);
 
-  const applyState = useCallback((nextState) => {
-    setState(nextState);
+  const applyState = useCallback((nextState, options = {}) => {
+    setState((previous) => {
+      if (!previous || options.replaceControls) {
+        return nextState;
+      }
+      if (previous.devices?.version === nextState.devices?.version) {
+        return {
+          ...previous,
+          appTitle: nextState.appTitle,
+          routing: nextState.routing,
+          status: nextState.status,
+          lastError: nextState.lastError,
+        };
+      }
+      if (isControlActive()) {
+        return {
+          ...previous,
+          appTitle: nextState.appTitle,
+          routing: nextState.routing,
+          status: nextState.status,
+          lastError: nextState.lastError,
+        };
+      }
+      return nextState;
+    });
     setLoading(false);
     if (nextState.lastError) {
       setError("Audio routing stopped. Check audio_splitter_error.log for details.");
@@ -75,7 +98,7 @@ function App() {
       try {
         setBusy(label);
         setError("");
-        applyState(await action());
+        applyState(await action(), { replaceControls: true });
       } catch (err) {
         setError(err.message || String(err));
       } finally {
@@ -89,7 +112,7 @@ function App() {
     let alive = true;
     API.getState()
       .then((payload) => {
-        if (alive) applyState(payload);
+        if (alive) applyState(payload, { replaceControls: true });
       })
       .catch((err) => {
         if (alive) {
@@ -125,7 +148,7 @@ function App() {
       const next = mergeState(state, patch);
       setState(next);
       API.update(patch)
-        .then(applyState)
+        .then((payload) => applyState(payload))
         .catch((err) => setError(err.message || String(err)));
     },
     [applyState, state],
@@ -370,6 +393,12 @@ function mergeState(state, patch) {
   if ("allowFeedback" in patch) next.settings.allowFeedback = patch.allowFeedback;
   if ("outputs" in patch) next.selection.outputs = patch.outputs;
   return next;
+}
+
+function isControlActive() {
+  const activeElement = document.activeElement;
+  if (!activeElement || !activeElement.closest) return false;
+  return Boolean(activeElement.closest("select, input, .segment-group"));
 }
 
 createRoot(document.getElementById("root")).render(<App />);

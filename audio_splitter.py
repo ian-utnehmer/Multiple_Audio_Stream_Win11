@@ -843,7 +843,7 @@ class AudioSplitterApp(ctk.CTk):
             for row in self.output_rows
         ]
 
-        self.sources = []
+        new_sources: list[DeviceChoice] = []
         seen_sources: set[tuple[str, bool]] = set()
         for microphone in microphones:
             is_loopback = bool(getattr(microphone, "isloopback", False))
@@ -853,7 +853,7 @@ class AudioSplitterApp(ctk.CTk):
             if key in seen_sources:
                 continue
             seen_sources.add(key)
-            self.sources.append(
+            new_sources.append(
                 DeviceChoice(
                     label=f"Loopback: {microphone.name} ({self._channel_text(microphone.channels)})",
                     id=microphone.id,
@@ -863,8 +863,8 @@ class AudioSplitterApp(ctk.CTk):
                 )
             )
 
-        self.outputs = [self._none_output()]
-        self.outputs.extend(
+        new_outputs = [self._none_output()]
+        new_outputs.extend(
             DeviceChoice(
                 label=f"{speaker.name} ({self._channel_text(speaker.channels)})",
                 id=speaker.id,
@@ -874,8 +874,13 @@ class AudioSplitterApp(ctk.CTk):
             for speaker in speakers
         )
 
-        signature = self._device_signature(self.sources, self.outputs)
+        signature = self._device_signature(new_sources, new_outputs)
         changed = signature != self.device_signature
+        if not changed and silent:
+            return True
+
+        self.sources = new_sources
+        self.outputs = new_outputs
         self.device_signature = signature
 
         source_values = [device.label for device in self.sources] or ["No loopback sources found"]

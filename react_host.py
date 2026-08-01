@@ -21,6 +21,7 @@ from audio_splitter import (
     APP_TITLE,
     DEFAULT_BLOCK_SIZE,
     DEFAULT_SAMPLE_RATE,
+    DEVICE_REFRESH_MS,
     ERROR_LOG,
     LIVE_RESTART_MS,
     NONE_LABEL,
@@ -63,6 +64,8 @@ class SplitterControl:
         self.sources: list[DeviceChoice] = []
         self.outputs: list[DeviceChoice] = [self._none_output()]
         self.device_signature: tuple[tuple[str, str, bool, bool], ...] = ()
+        self.device_version = 0
+        self.last_device_refresh = 0.0
         self.source_key = ""
         self.output_rows = [
             OutputSelection(id=self._new_row_id(), device_key=NONE_KEY, volume=FloatSetting(80)),
@@ -76,11 +79,13 @@ class SplitterControl:
         self.status = "Choose a loopback source and at least one additional output."
         self.last_error = ""
         self.live_restart_timer: threading.Timer | None = None
+        self.device_poll_stop = threading.Event()
         self.refresh_devices(silent=True)
+        self.device_poll_thread = threading.Thread(target=self._poll_devices_background, name="device-poller", daemon=True)
+        self.device_poll_thread.start()
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
-            self.refresh_devices(silent=True)
             self._poll_router_errors()
             running = bool(self.router and self.router.is_alive())
             frames = self.router.frames_routed if self.router else 0
@@ -88,6 +93,8 @@ class SplitterControl:
             return {
                 "appTitle": APP_TITLE,
                 "devices": {
+                    "version": self.device_version,
+                    "lastRefresh": self.last_device_refresh,
                     "sources": [self._serialize_device(device) for device in self.sources],
                     "outputs": [self._serialize_device(device) for device in self.outputs],
                 },
@@ -130,11 +137,12 @@ class SplitterControl:
                 default_speaker = sc.default_speaker()
                 microphones = sc.all_microphones(include_loopback=True)
             except Exception as exc:
-                self.status = "Could not read Windows audio devices."
+                if not silent:
+                    self.status = "Could not read Windows audio devices."
                 self.last_error = str(exc)
                 return self.snapshot_without_refresh()
 
-            self.sources = []
+            new_sources: list[DeviceChoice] = []
             seen_sources: set[tuple[str, bool]] = set()
             for microphone in microphones:
                 is_loopback = bool(getattr(microphone, "isloopback", False))
@@ -144,7 +152,7 @@ class SplitterControl:
                 if key in seen_sources:
                     continue
                 seen_sources.add(key)
-                self.sources.append(
+                new_sources.append(
                     DeviceChoice(
                         label=f"Loopback: {microphone.name} ({self._channel_text(microphone.channels)})",
                         id=microphone.id,
@@ -154,8 +162,8 @@ class SplitterControl:
                     )
                 )
 
-            self.outputs = [self._none_output()]
-            self.outputs.extend(
+            new_outputs = [self._none_output()]
+            new_outputs.extend(
                 DeviceChoice(
                     label=f"{speaker.name} ({self._channel_text(speaker.channels)})",
                     id=speaker.id,
@@ -165,9 +173,18 @@ class SplitterControl:
                 for speaker in speakers
             )
 
-            signature = self._device_signature(self.sources, self.outputs)
+            signature = self._device_signature(new_sources, new_outputs)
             changed = signature != self.device_signature
+            self.last_device_refresh = time.time()
+            if not changed:
+                if not silent and not self._is_running():
+                    self.status = f"Found {len(self.sources)} loopback source(s) and {len(self.outputs) - 1} output device(s)."
+                return self.snapshot_without_refresh()
+
+            self.sources = new_sources
+            self.outputs = new_outputs
             self.device_signature = signature
+            self.device_version += 1
 
             if self.source_key and not self._device_by_key(self.sources, self.source_key):
                 self.source_key = ""
@@ -195,6 +212,8 @@ class SplitterControl:
         return {
             "appTitle": APP_TITLE,
             "devices": {
+                "version": self.device_version,
+                "lastRefresh": self.last_device_refresh,
                 "sources": [self._serialize_device(device) for device in self.sources],
                 "outputs": [self._serialize_device(device) for device in self.outputs],
             },
@@ -360,7 +379,13 @@ class SplitterControl:
             return self.snapshot_without_refresh()
 
     def shutdown(self) -> None:
+        self.device_poll_stop.set()
         self.stop("Stopped.")
+
+    def _poll_devices_background(self) -> None:
+        interval_seconds = max(0.5, DEVICE_REFRESH_MS / 1000.0)
+        while not self.device_poll_stop.wait(interval_seconds):
+            self.refresh_devices(silent=True)
 
     def _restart_router(self) -> None:
         with self.lock:

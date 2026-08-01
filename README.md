@@ -27,6 +27,7 @@ This app also came from frustration with the driver-heavy setup and cleanup proc
 - Apply volume changes instantly while routing.
 - Restart the live stream automatically when source, output, sample rate, or block size changes.
 - Keep the device list refreshed while the app is open.
+- Refresh devices in the background without rebuilding selectors unless the actual device list changes.
 - Stop routing if a selected device disappears.
 - Use a modern React UI with styled scrollbars, segmented controls, and responsive routing controls.
 - Avoid runaway software backlog with a bounded low-latency jitter buffer per output.
@@ -160,7 +161,7 @@ Boosting a per-output row above `100%` can help quiet streams, but it cannot rec
 
 ## Device Changes
 
-The app refreshes Windows audio devices while it is open. If a selected source or output disconnects, routing stops and the app tells you which device disappeared. Reconnect the device, click `Refresh Devices` if needed, then start routing again.
+The app refreshes Windows audio devices while it is open. Background scans are quiet: selectors are not rebuilt unless Windows reports that the actual device list changed. If a selected source or output disconnects, routing stops and the app tells you which device disappeared. Reconnect the device, click `Refresh Devices` if needed, then start routing again.
 
 ## Optional Driver Details
 
