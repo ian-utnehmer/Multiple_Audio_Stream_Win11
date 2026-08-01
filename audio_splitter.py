@@ -23,6 +23,10 @@ DEVICE_REFRESH_MS = 1500
 LIVE_RESTART_MS = 75
 OUTPUT_QUEUE_BLOCKS = 1
 STARTUP_DISCARD_SECONDS = 0.12
+AUTO_RECOVERY_GRACE_SECONDS = 4.0
+RESYNC_WATCHDOG_WINDOW_SECONDS = 10.0
+RESYNC_WATCHDOG_MIN_BLOCKS = 24
+RESYNC_WATCHDOG_COOLDOWN_SECONDS = 30.0
 MAX_VOLUME = 5.0
 ERROR_LOG = Path(__file__).with_name("audio_splitter_error.log")
 ICON_PATH = Path(__file__).with_name("assets") / "audio_splitter.ico"
@@ -76,6 +80,7 @@ class AudioRouter:
         self.peak = 0.0
         self.skipped_blocks = 0
         self.frames_routed = 0
+        self.started_at = time.perf_counter()
         self._thread: threading.Thread | None = None
         self._output_threads: list[threading.Thread] = []
         self.output_queue_blocks = OUTPUT_QUEUE_BLOCKS
@@ -316,6 +321,9 @@ class AudioSplitterApp(ctk.CTk):
         self.router: AudioRouter | None = None
         self.device_signature: tuple[tuple[str, str, bool, bool], ...] = ()
         self.live_restart_after_id: str | None = None
+        self.resync_watchdog_snapshot: tuple[float, int] | None = None
+        self.last_auto_recovery_at = 0.0
+        self.auto_recovery_count = 0
         self.output_rows: list[OutputRow] = []
 
         self.source_var = tk.StringVar()
@@ -952,6 +960,7 @@ class AudioSplitterApp(ctk.CTk):
             master_volume=self.master_volume_var,
         )
         self.router.start()
+        self.resync_watchdog_snapshot = (time.perf_counter(), self.router.skipped_blocks)
         self.start_button.configure(text="Stop Routing", fg_color="#dc2626", hover_color="#b91c1c")
         self.status_var.set("Routing current audio...")
         return True
@@ -963,6 +972,7 @@ class AudioSplitterApp(ctk.CTk):
         if self.router:
             self.router.stop()
         self.router = None
+        self.resync_watchdog_snapshot = None
         self._set_level(0)
         self.start_button.configure(text="Start Routing", fg_color="#2563eb", hover_color="#1d4ed8")
         self.status_var.set(status)
@@ -986,6 +996,37 @@ class AudioSplitterApp(ctk.CTk):
         if self.router and self.router.is_alive():
             self.router.set_volumes()
 
+    def _should_auto_recover_router(self) -> bool:
+        if not self.router or not self.router.is_alive():
+            self.resync_watchdog_snapshot = None
+            return False
+
+        now = time.perf_counter()
+        if now - self.router.started_at < AUTO_RECOVERY_GRACE_SECONDS:
+            return False
+        if now - self.last_auto_recovery_at < RESYNC_WATCHDOG_COOLDOWN_SECONDS:
+            return False
+
+        if self.resync_watchdog_snapshot is None:
+            self.resync_watchdog_snapshot = (now, self.router.skipped_blocks)
+            return False
+
+        then, skipped_blocks = self.resync_watchdog_snapshot
+        if now - then < RESYNC_WATCHDOG_WINDOW_SECONDS:
+            return False
+
+        skipped_delta = self.router.skipped_blocks - skipped_blocks
+        self.resync_watchdog_snapshot = (now, self.router.skipped_blocks)
+        return skipped_delta >= RESYNC_WATCHDOG_MIN_BLOCKS
+
+    def _auto_recover_router(self) -> None:
+        self.auto_recovery_count += 1
+        self.last_auto_recovery_at = time.perf_counter()
+        self._stop_router(status=f"Auto-recovering audio stream ({self.auto_recovery_count})...")
+        self._start_router()
+        if self.router and self.router.is_alive():
+            self.status_var.set(f"Audio stream auto-recovered ({self.auto_recovery_count}).")
+
     def _poll_router(self) -> None:
         if self.router:
             while not self.router.error_queue.empty():
@@ -1000,11 +1041,16 @@ class AudioSplitterApp(ctk.CTk):
                 break
 
             if self.router and self.router.is_alive():
+                if self._should_auto_recover_router():
+                    self._auto_recover_router()
+                    self.after(120, self._poll_router)
+                    return
                 self._set_level(self.router.level)
                 seconds = self.router.frames_routed / max(1, int(self.sample_rate_var.get()))
                 skip_text = f", {self.router.skipped_blocks} resync block(s)" if self.router.skipped_blocks else ""
+                recovery_text = f", {self.auto_recovery_count} auto-recoveries" if self.auto_recovery_count else ""
                 peak_text = ", hot input" if self.router.peak > 0.98 else ""
-                self.status_var.set(f"Routing current audio... {seconds:,.1f}s processed{skip_text}{peak_text}")
+                self.status_var.set(f"Routing current audio... {seconds:,.1f}s processed{skip_text}{recovery_text}{peak_text}")
             elif self.router:
                 self._stop_router()
         self.after(120, self._poll_router)

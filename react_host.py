@@ -19,6 +19,7 @@ from urllib.parse import unquote, urlparse
 
 from audio_splitter import (
     APP_TITLE,
+    AUTO_RECOVERY_GRACE_SECONDS,
     DEFAULT_BLOCK_SIZE,
     DEFAULT_SAMPLE_RATE,
     DEVICE_REFRESH_MS,
@@ -26,6 +27,9 @@ from audio_splitter import (
     ICON_PATH,
     LIVE_RESTART_MS,
     NONE_LABEL,
+    RESYNC_WATCHDOG_COOLDOWN_SECONDS,
+    RESYNC_WATCHDOG_MIN_BLOCKS,
+    RESYNC_WATCHDOG_WINDOW_SECONDS,
     AudioRouter,
     DeviceChoice,
     OutputRoute,
@@ -82,6 +86,9 @@ class SplitterControl:
         self.status = "Choose a loopback source and at least one additional output."
         self.last_error = ""
         self.live_restart_timer: threading.Timer | None = None
+        self.resync_watchdog_snapshot: tuple[float, int] | None = None
+        self.last_auto_recovery_at = 0.0
+        self.auto_recovery_count = 0
         self.device_poll_stop = threading.Event()
         self.refresh_devices(silent=True)
         self.device_poll_thread = threading.Thread(target=self._poll_devices_background, name="device-poller", daemon=True)
@@ -126,6 +133,7 @@ class SplitterControl:
                     "skippedBlocks": self.router.skipped_blocks if running and self.router else 0,
                     "resyncBlocks": self.router.skipped_blocks if running and self.router else 0,
                     "queueBlocks": self.router.output_queue_blocks if self.router else 0,
+                    "autoRecoveries": self.auto_recovery_count,
                 },
                 "status": self.status,
                 "lastError": self.last_error,
@@ -241,6 +249,7 @@ class SplitterControl:
                 "skippedBlocks": self.router.skipped_blocks if running and self.router else 0,
                 "resyncBlocks": self.router.skipped_blocks if running and self.router else 0,
                 "queueBlocks": self.router.output_queue_blocks if self.router else 0,
+                "autoRecoveries": self.auto_recovery_count,
             },
             "status": self.status,
             "lastError": self.last_error,
@@ -366,6 +375,7 @@ class SplitterControl:
                 master_volume=self.master_volume,
             )
             self.router.start()
+            self.resync_watchdog_snapshot = (time.perf_counter(), self.router.skipped_blocks)
             self.status = "Routing current audio..."
             self.last_error = ""
             return self.snapshot_without_refresh()
@@ -378,6 +388,7 @@ class SplitterControl:
             if self.router:
                 self.router.stop()
             self.router = None
+            self.resync_watchdog_snapshot = None
             self.status = status
             return self.snapshot_without_refresh()
 
@@ -417,12 +428,47 @@ class SplitterControl:
             self.stop(f"Audio routing stopped because of an error. See {ERROR_LOG}.")
             break
         if self.router and self.router.is_alive():
+            if self._should_auto_recover_router():
+                self._auto_recover_router()
+                return
             seconds = self.router.frames_routed / max(1, self.sample_rate)
             skip_text = f", {self.router.skipped_blocks} resync block(s)" if self.router.skipped_blocks else ""
+            recovery_text = f", {self.auto_recovery_count} auto-recoveries" if self.auto_recovery_count else ""
             peak_text = ", hot input" if self.router.peak > 0.98 else ""
-            self.status = f"Routing current audio... {seconds:,.1f}s processed{skip_text}{peak_text}"
+            self.status = f"Routing current audio... {seconds:,.1f}s processed{skip_text}{recovery_text}{peak_text}"
         elif self.router:
             self.stop()
+
+    def _should_auto_recover_router(self) -> bool:
+        if not self.router or not self.router.is_alive():
+            self.resync_watchdog_snapshot = None
+            return False
+
+        now = time.perf_counter()
+        if now - self.router.started_at < AUTO_RECOVERY_GRACE_SECONDS:
+            return False
+        if now - self.last_auto_recovery_at < RESYNC_WATCHDOG_COOLDOWN_SECONDS:
+            return False
+
+        if self.resync_watchdog_snapshot is None:
+            self.resync_watchdog_snapshot = (now, self.router.skipped_blocks)
+            return False
+
+        then, skipped_blocks = self.resync_watchdog_snapshot
+        if now - then < RESYNC_WATCHDOG_WINDOW_SECONDS:
+            return False
+
+        skipped_delta = self.router.skipped_blocks - skipped_blocks
+        self.resync_watchdog_snapshot = (now, self.router.skipped_blocks)
+        return skipped_delta >= RESYNC_WATCHDOG_MIN_BLOCKS
+
+    def _auto_recover_router(self) -> None:
+        self.auto_recovery_count += 1
+        self.last_auto_recovery_at = time.perf_counter()
+        self.stop(f"Auto-recovering audio stream ({self.auto_recovery_count})...")
+        self.start()
+        if self.router and self.router.is_alive():
+            self.status = f"Audio stream auto-recovered ({self.auto_recovery_count})."
 
     def _missing_active_devices(self) -> list[str]:
         if not self.router or not self.router.is_alive():

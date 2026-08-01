@@ -218,7 +218,8 @@ See [driver/README.md](driver/README.md) for the driver-specific build, install,
 
 - Use a smaller block size such as `128` or `64`.
 - Avoid Bluetooth if you need very low latency.
-- Watch for resync counts in the status line; frequent resyncs mean that device, sample rate, block size, or CPU load cannot keep up cleanly.
+- Watch for resync counts in the status line; frequent resyncs mean that device clocks, sample rate, block size, or CPU load cannot keep up cleanly.
+- If resyncs become frequent during a long session, Audio Splitter automatically refreshes the routing stream. This is the same recovery effect as toggling between `44100` Hz and `48000` Hz, but it happens quietly without changing your selected settings.
 
 ### Driver setup says test-signing is blocked
 

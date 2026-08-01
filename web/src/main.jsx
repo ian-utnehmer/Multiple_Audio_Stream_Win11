@@ -253,6 +253,7 @@ function App() {
           <p>{state?.status}</p>
           {state?.routing.queueBlocks > 0 && <span>Live queue: {state.routing.queueBlocks} block</span>}
           {state?.routing.resyncBlocks > 0 && <span>{state.routing.resyncBlocks} resync block(s)</span>}
+          {state?.routing.autoRecoveries > 0 && <span>{state.routing.autoRecoveries} auto-recoveries</span>}
         </div>
 
         <button className="quiet" onClick={() => run("Shutting down", API.shutdown)}>
