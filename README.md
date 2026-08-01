@@ -55,6 +55,16 @@ Double-click:
 run_windows.bat
 ```
 
+On first launch, `run_windows.bat` checks whether `Splitter Output` is installed. If it is missing, the launcher runs the driver setup, elevates to administrator, installs/caches the result, and then starts the UI. Later launches use the cached/verified driver state and go straight to the UI.
+
+For manual driver setup, double-click:
+
+```bat
+setup_windows.bat
+```
+
+The setup script elevates to administrator, installs missing driver-build prerequisites with WinGet when needed, builds the branded virtual audio driver, enables Windows test-signing mode, installs the driver, and launches the app. If test-signing is enabled for the first time, Windows requires a reboot; rerun `run_windows.bat` or `setup_windows.bat` after reboot to finish.
+
 Or run manually from PowerShell:
 
 ```powershell

@@ -23,6 +23,16 @@ This is not a production-signed driver package. Shipping a production driver req
 
 ## Build And Install
 
+The normal path is to run the root launcher:
+
+```bat
+run_windows.bat
+```
+
+It checks for `Splitter Output`, runs this setup only when the driver is missing, caches the installed result, and then opens the UI.
+
+You can also run the driver setup manually.
+
 From a normal PowerShell:
 
 ```powershell

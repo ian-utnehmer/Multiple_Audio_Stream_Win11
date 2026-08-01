@@ -2,6 +2,25 @@
 setlocal
 cd /d "%~dp0"
 
+if /i "%~1"=="--skip-driver-setup" goto python_setup
+
+where powershell >nul 2>nul
+if errorlevel 1 (
+  echo PowerShell was not found.
+  echo Driver auto-setup will be skipped.
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup_windows.ps1" -FromLauncher -EnsureDriverOnly
+  if errorlevel 100 (
+    exit /b 0
+  )
+  if errorlevel 1 (
+    echo Driver setup failed.
+    pause
+    exit /b 1
+  )
+)
+
+:python_setup
 where py >nul 2>nul
 if errorlevel 1 (
   echo Python launcher "py" was not found.

@@ -5,3 +5,4 @@ __pycache__/
 *.log
 driver/work/
 driver/out/
+driver/.cache/
