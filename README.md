@@ -227,7 +227,7 @@ Secure Boot is likely enabled. Disable Secure Boot in UEFI/BIOS, boot back into 
 
 ### Games stopped launching after optional driver setup
 
-Disable test-signing from the app's `Driver Compatibility` panel, or run:
+Disable test-signing from the app's `Driver Compatibility` panel, double-click `Disable-TestSigning.bat`, or run:
 
 ```powershell
 .\Disable-TestSigning.ps1
@@ -249,6 +249,7 @@ The setup script handles a known WDK validation-tool failure by retrying without
 - `setup_windows.bat`: direct optional-driver setup launcher
 - `setup_windows.ps1`: elevated setup orchestration
 - `Install-Shortcuts.ps1`: Start Menu/taskbar shortcut helper
+- `Disable-TestSigning.bat`: double-click helper for restoring normal game/anti-cheat boot settings
 - `Disable-TestSigning.ps1`: disables test-signing/debug/integrity-bypass boot settings for normal anti-cheat compatibility
 - `requirements.txt`: Python dependencies
 - `web/`: React source and committed production build

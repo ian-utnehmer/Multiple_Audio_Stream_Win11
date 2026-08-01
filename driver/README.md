@@ -27,7 +27,7 @@ This is not a production-signed driver package. Shipping a production driver req
 
 The optional driver uses Windows test-signing mode. Some games protected by kernel-level anti-cheat systems refuse to launch while test-signing is enabled.
 
-If games stop launching after optional-driver setup, disable test-signing and restart:
+If games stop launching after optional-driver setup, double-click `Disable-TestSigning.bat` from the repo root, or disable test-signing manually and restart:
 
 ```powershell
 .\Disable-TestSigning.ps1
