@@ -41,7 +41,7 @@ For normal no-driver use:
 - Windows 10 or Windows 11
 - Native Windows Python 3
 - Windows audio devices visible to WASAPI
-- Python packages from `requirements.txt`: `soundcard`, `numpy`, and `customtkinter`
+- Python packages from `requirements.txt`: `soundcard`, `numpy`, `customtkinter`, and `pywebview`
 
 Do not run the app from WSL. WSL cannot reliably see or route native Windows audio devices.
 
@@ -66,7 +66,9 @@ run_windows.bat
 
 The launcher opens a small `Launching` window, prepares the Python environment, installs dependencies into `.venv`, and opens the app. The console window closes after handing off to the launcher UI.
 
-By default, the app opens the React interface through a local Python host. If the optional `pywebview` package is installed, it opens in an embedded app window. Otherwise, it falls back to your default browser. Use the in-app `Quit App` button to shut down the local host from browser mode.
+By default, the app opens the React interface in an embedded desktop window through `pywebview`. The local Python host still owns the audio engine, but the UI should look and behave like an app, not a browser tab. A browser mode exists only as an explicit developer fallback with `react_host.py --browser`.
+
+If the app window does not appear, check `launcher_error.log` or `react_host_error.log` in the project folder.
 
 To launch the native fallback UI instead, double-click:
 
@@ -130,7 +132,7 @@ After installation:
 - `Refresh Devices`: manually refreshes the device list.
 - `Install Optional Driver`: starts the optional virtual-driver setup.
 - Main workspace and output rows are scrollable when the window is smaller or many outputs are added.
-- `Quit App`: closes the React host when running in browser mode.
+- `Quit App`: closes the React host.
 
 ## Latency And Audio Quality
 

@@ -95,6 +95,10 @@ class Launcher(tk.Tk):
             self._ensure_react_build()
             self._stop_if_cancelled()
 
+            self._status("Checking app window runtime...")
+            self._ensure_app_window_runtime()
+            self._stop_if_cancelled()
+
             self._status("Opening audio splitter...")
             self._launch_app()
             self._done()
@@ -123,6 +127,9 @@ class Launcher(tk.Tk):
             )
         self._run([npm, "install"], cwd=WEB_DIR)
         self._run([npm, "run", "build"], cwd=WEB_DIR)
+
+    def _ensure_app_window_runtime(self) -> None:
+        self._run([str(VENV_PYTHON), "-c", "import webview"])
 
     def _launch_app(self) -> None:
         subprocess.Popen(

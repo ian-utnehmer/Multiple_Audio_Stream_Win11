@@ -9,7 +9,6 @@ import threading
 import time
 import traceback
 import uuid
-import webbrowser
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -614,15 +613,15 @@ def run(open_mode: str) -> int:
 
     try:
         if open_mode == "webview":
-            try:
-                import webview
+            import webview
 
-                webview.create_window(APP_TITLE, url, width=1180, height=760, min_size=(940, 660))
-                webview.start()
-                shutdown_event.set()
-            except Exception:
-                webbrowser.open(url)
+            start_options = {"gui": "edgechromium"} if sys.platform == "win32" else {}
+            webview.create_window(APP_TITLE, url, width=1180, height=760, min_size=(940, 660))
+            webview.start(**start_options)
+            shutdown_event.set()
         elif open_mode == "browser":
+            import webbrowser
+
             webbrowser.open(url)
 
         while not shutdown_event.is_set():
@@ -638,7 +637,7 @@ def run(open_mode: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the React Audio Splitter host.")
-    parser.add_argument("--browser", action="store_true", help="Open in the default browser instead of an embedded webview.")
+    parser.add_argument("--browser", action="store_true", help="Developer fallback: open in the default browser instead of the app window.")
     parser.add_argument("--no-open", action="store_true", help="Start the local server without opening a UI window.")
     args = parser.parse_args()
     if args.no_open:
@@ -651,4 +650,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with (ROOT / "react_host_error.log").open("a", encoding="utf-8") as log:
+            log.write(f"\n[{timestamp}]\n{traceback.format_exc()}\n")
+        raise
