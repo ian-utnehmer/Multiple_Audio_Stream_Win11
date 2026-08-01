@@ -35,6 +35,12 @@ const API = {
   async addOutput() {
     return request("/api/outputs", { method: "POST" });
   },
+  async installShortcuts(payload) {
+    return request("/api/shortcuts", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
   async removeOutput(id) {
     return request(`/api/outputs/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
@@ -60,6 +66,9 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [shortcutStartMenu, setShortcutStartMenu] = useState(true);
+  const [shortcutTaskbar, setShortcutTaskbar] = useState(true);
+  const [shortcutMessage, setShortcutMessage] = useState("");
   const pollRef = useRef(null);
 
   const applyState = useCallback((nextState, options = {}) => {
@@ -158,6 +167,23 @@ function App() {
     () => ({ width: `${Math.round((state?.routing.level ?? 0) * 100)}%` }),
     [state?.routing.level],
   );
+
+  const installShortcuts = useCallback(async () => {
+    try {
+      setBusy("Installing shortcuts");
+      setError("");
+      setShortcutMessage("");
+      const result = await API.installShortcuts({
+        startMenu: shortcutStartMenu,
+        taskbar: shortcutTaskbar,
+      });
+      setShortcutMessage((result.messages || []).join(" "));
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setBusy("");
+    }
+  }, [shortcutStartMenu, shortcutTaskbar]);
 
   if (loading) {
     return (
@@ -312,6 +338,40 @@ function App() {
             />
             <span>Allow output back into the captured source device</span>
           </label>
+        </section>
+
+        <section className="panel">
+          <div className="panel-toolbar">
+            <PanelTitle icon={<Plus size={18} />} title="Windows Shortcuts" subtitle="Add Audio Splitter to places you launch apps from." />
+            <button
+              className="add-button"
+              disabled={Boolean(busy) || (!shortcutStartMenu && !shortcutTaskbar)}
+              onClick={installShortcuts}
+            >
+              <Plus size={17} />
+              Create Shortcuts
+            </button>
+          </div>
+
+          <div className="shortcut-grid">
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={shortcutStartMenu}
+                onChange={(event) => setShortcutStartMenu(event.target.checked)}
+              />
+              <span>Start Menu shortcut</span>
+            </label>
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={shortcutTaskbar}
+                onChange={(event) => setShortcutTaskbar(event.target.checked)}
+              />
+              <span>Taskbar pin request</span>
+            </label>
+          </div>
+          {shortcutMessage && <div className="shortcut-message">{shortcutMessage}</div>}
         </section>
       </section>
     </main>

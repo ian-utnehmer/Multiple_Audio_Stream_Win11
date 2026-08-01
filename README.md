@@ -131,6 +131,7 @@ After installation:
 - `Allow output back into the captured source device`: disables the feedback protection guard for testing.
 - `Refresh Devices`: manually refreshes the device list.
 - `Install Optional Driver`: starts the optional virtual-driver setup.
+- `Create Shortcuts`: adds Start Menu and taskbar shortcut entries for Audio Splitter.
 - Main workspace and output rows are scrollable when the window is smaller or many outputs are added.
 - `Quit App`: closes the React host.
 
@@ -164,6 +165,10 @@ Boosting a per-output row above `100%` can help quiet streams, but it cannot rec
 ## Device Changes
 
 The app refreshes Windows audio devices while it is open. Background scans are quiet: selectors are not rebuilt unless Windows reports that the actual device list changed. If a selected source or output disconnects, routing stops and the app tells you which device disappeared. Reconnect the device, click `Refresh Devices` if needed, then start routing again.
+
+## Windows Shortcuts
+
+Use `Create Shortcuts` in the app to create a Start Menu shortcut and request a taskbar pin. Windows 11 can block fully automatic taskbar pinning, so the app also creates the taskbar shortcut file and tells you if Windows requires manual pinning from Start.
 
 ## Optional Driver Details
 
@@ -228,6 +233,7 @@ The setup script handles a known WDK validation-tool failure by retrying without
 - `run_native_windows.bat`: native fallback launcher
 - `setup_windows.bat`: direct optional-driver setup launcher
 - `setup_windows.ps1`: elevated setup orchestration
+- `Install-Shortcuts.ps1`: Start Menu/taskbar shortcut helper
 - `requirements.txt`: Python dependencies
 - `web/`: React source and committed production build
 - `assets/audio_splitter.ico`: Windows window/taskbar icon
