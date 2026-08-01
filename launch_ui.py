@@ -11,8 +11,10 @@ from tkinter import messagebox, ttk
 
 
 APP_TITLE = "Audio Splitter"
+APP_USER_MODEL_ID = "AudioSplitter.App"
 ROOT = Path(__file__).resolve().parent
 LOG_FILE = ROOT / "launcher_error.log"
+ICON_PATH = ROOT / "assets" / "audio_splitter.ico"
 VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 VENV_PYTHONW = ROOT / ".venv" / "Scripts" / "pythonw.exe"
 
@@ -23,6 +25,7 @@ class Launcher(tk.Tk):
         self.title(f"{APP_TITLE} Launcher")
         self.resizable(False, False)
         self.configure(bg="#f5f7fb")
+        self._set_window_icon()
         self.protocol("WM_DELETE_WINDOW", self._close_requested)
 
         self.messages: queue.Queue[tuple[str, str | None]] = queue.Queue()
@@ -31,6 +34,21 @@ class Launcher(tk.Tk):
         self._build_ui()
         self.after(100, self._poll_messages)
         threading.Thread(target=self._run_startup, name="startup", daemon=True).start()
+
+    def _set_window_icon(self) -> None:
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+            except Exception:
+                pass
+
+        if ICON_PATH.exists():
+            try:
+                self.iconbitmap(default=str(ICON_PATH))
+            except tk.TclError:
+                pass
 
     def _build_ui(self) -> None:
         style = ttk.Style(self)

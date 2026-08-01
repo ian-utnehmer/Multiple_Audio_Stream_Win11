@@ -210,6 +210,7 @@ The setup script handles a known WDK validation-tool failure by retrying without
 - `setup_windows.bat`: direct optional-driver setup launcher
 - `setup_windows.ps1`: elevated setup orchestration
 - `requirements.txt`: Python dependencies
+- `assets/audio_splitter.ico`: Windows window/taskbar icon
 - `driver/`: optional virtual audio driver scripts and documentation
 
 Generated local files are ignored:

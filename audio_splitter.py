@@ -14,6 +14,7 @@ from tkinter import messagebox, ttk
 
 
 APP_TITLE = "Audio Splitter"
+APP_USER_MODEL_ID = "AudioSplitter.App"
 DEFAULT_SAMPLE_RATE = 48000
 DEFAULT_BLOCK_SIZE = 512
 DEVICE_REFRESH_MS = 1500
@@ -22,6 +23,7 @@ OUTPUT_QUEUE_BLOCKS = 1
 STARTUP_DISCARD_SECONDS = 0.12
 MAX_VOLUME = 5.0
 ERROR_LOG = Path(__file__).with_name("audio_splitter_error.log")
+ICON_PATH = Path(__file__).with_name("assets") / "audio_splitter.ico"
 NONE_LABEL = "None - source device already plays this audio"
 
 
@@ -302,6 +304,7 @@ class AudioSplitterApp(tk.Tk):
         self.title(APP_TITLE)
         self.geometry("980x700")
         self.minsize(900, 640)
+        self._set_window_icon()
 
         self.sources: list[DeviceChoice] = []
         self.outputs: list[DeviceChoice] = [self._none_output()]
@@ -326,6 +329,21 @@ class AudioSplitterApp(tk.Tk):
         self.after(120, self._poll_router)
         self.after(DEVICE_REFRESH_MS, self._poll_devices)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _set_window_icon(self) -> None:
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+            except Exception:
+                pass
+
+        if ICON_PATH.exists():
+            try:
+                self.iconbitmap(default=str(ICON_PATH))
+            except tk.TclError:
+                pass
 
     def _build_ui(self) -> None:
         self.configure(bg="#edf2f7")
