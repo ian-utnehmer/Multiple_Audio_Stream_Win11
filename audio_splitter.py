@@ -10,7 +10,9 @@ import traceback
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox
+
+import customtkinter as ctk
 
 
 APP_TITLE = "Audio Splitter"
@@ -39,13 +41,13 @@ class DeviceChoice:
 
 @dataclass
 class OutputRow:
-    frame: ttk.Frame
-    label: ttk.Label
+    frame: ctk.CTkFrame
+    label: ctk.CTkLabel
     device_var: tk.StringVar
     volume_var: tk.DoubleVar
-    value_label: ttk.Label
-    combo: ttk.Combobox
-    remove_button: ttk.Button
+    value_label: ctk.CTkLabel
+    combo: ctk.CTkOptionMenu
+    remove_button: ctk.CTkButton
 
 
 @dataclass(frozen=True)
@@ -298,12 +300,14 @@ class AudioRouter:
         return np.clip(routed, -1.0, 1.0).astype("float32", copy=False)
 
 
-class AudioSplitterApp(tk.Tk):
+class AudioSplitterApp(ctk.CTk):
     def __init__(self) -> None:
+        ctk.set_appearance_mode("Light")
+        ctk.set_default_color_theme("blue")
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("980x700")
-        self.minsize(900, 640)
+        self.geometry("1080x740")
+        self.minsize(940, 660)
         self._set_window_icon()
 
         self.sources: list[DeviceChoice] = []
@@ -312,7 +316,6 @@ class AudioSplitterApp(tk.Tk):
         self.device_signature: tuple[tuple[str, str, bool, bool], ...] = ()
         self.live_restart_after_id: str | None = None
         self.output_rows: list[OutputRow] = []
-        self.active_scroll_canvas: tk.Canvas | None = None
 
         self.source_var = tk.StringVar()
         self.master_volume_var = tk.DoubleVar(value=100)
@@ -347,279 +350,432 @@ class AudioSplitterApp(tk.Tk):
                 pass
 
     def _build_ui(self) -> None:
-        self.configure(bg="#edf2f7")
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        style.configure("TFrame", background="#edf2f7")
-        style.configure("Shell.TFrame", background="#edf2f7")
-        style.configure("Header.TFrame", background="#111827")
-        style.configure("Card.TFrame", background="#ffffff", relief="solid", borderwidth=1)
-        style.configure("OutputRow.TFrame", background="#f8fafc", relief="solid", borderwidth=1)
-        style.configure("Status.TFrame", background="#ffffff", relief="solid", borderwidth=1)
-        style.configure("TLabel", background="#edf2f7", foreground="#1f2937", font=("Segoe UI", 10))
-        style.configure("HeaderTitle.TLabel", background="#111827", foreground="#f9fafb", font=("Segoe UI", 21, "bold"))
-        style.configure("HeaderSub.TLabel", background="#111827", foreground="#cbd5e1", font=("Segoe UI", 10))
-        style.configure("CardTitle.TLabel", background="#ffffff", foreground="#111827", font=("Segoe UI", 12, "bold"))
-        style.configure("CardSub.TLabel", background="#ffffff", foreground="#64748b", font=("Segoe UI", 9))
-        style.configure("Field.TLabel", background="#ffffff", foreground="#334155", font=("Segoe UI", 9, "bold"))
-        style.configure("Hint.TLabel", background="#ffffff", foreground="#64748b", font=("Segoe UI", 9))
-        style.configure("Row.TLabel", background="#f8fafc", foreground="#334155", font=("Segoe UI", 10, "bold"))
-        style.configure("RowValue.TLabel", background="#f8fafc", foreground="#0f172a", font=("Segoe UI", 10, "bold"))
-        style.configure("Status.TLabel", background="#ffffff", foreground="#475569", font=("Segoe UI", 10))
-        style.configure("Primary.TButton", font=("Segoe UI", 11, "bold"), padding=(16, 8))
-        style.configure("Action.TButton", font=("Segoe UI", 9, "bold"), padding=(12, 7))
-        style.configure("Quiet.TButton", font=("Segoe UI", 9), padding=(10, 6))
-        style.configure("Danger.TButton", font=("Segoe UI", 9), padding=(10, 5))
-        style.map("Primary.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#2563eb"), ("!disabled", "#1d4ed8")])
-        style.map("Action.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#0f766e"), ("!disabled", "#0d9488")])
-        style.map("Danger.TButton", foreground=[("active", "#ffffff"), ("!disabled", "#ffffff")], background=[("active", "#b91c1c"), ("!disabled", "#dc2626")])
-        style.configure(
-            "App.Vertical.TScrollbar",
-            background="#94a3b8",
-            troughcolor="#e2e8f0",
-            bordercolor="#e2e8f0",
-            arrowcolor="#334155",
-            darkcolor="#64748b",
-            lightcolor="#cbd5e1",
-            relief="flat",
-            width=14,
-        )
-        style.map(
-            "App.Vertical.TScrollbar",
-            background=[("active", "#64748b"), ("pressed", "#475569"), ("!disabled", "#94a3b8")],
-            arrowcolor=[("active", "#0f172a"), ("!disabled", "#334155")],
-        )
-        style.configure("Level.Horizontal.TProgressbar", troughcolor="#e2e8f0", background="#22c55e", bordercolor="#e2e8f0", lightcolor="#22c55e", darkcolor="#16a34a")
+        self.configure(fg_color="#f8fafc")
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        shell = ttk.Frame(self, style="Shell.TFrame")
-        shell.pack(fill="both", expand=True)
+        sidebar = ctk.CTkFrame(self, width=284, corner_radius=0, fg_color="#0f172a")
+        sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.grid_propagate(False)
+        sidebar.grid_columnconfigure(0, weight=1)
+        sidebar.grid_rowconfigure(5, weight=1)
 
-        header = ttk.Frame(shell, style="Header.TFrame", padding=(22, 18))
-        header.pack(fill="x")
-        title_block = ttk.Frame(header, style="Header.TFrame")
-        title_block.pack(side="left", fill="x", expand=True)
-        ttk.Label(title_block, text=APP_TITLE, style="HeaderTitle.TLabel").pack(anchor="w")
-        ttk.Label(
-            title_block,
-            text="Mirror one live Windows audio stream to multiple outputs with independent volume.",
-            style="HeaderSub.TLabel",
-        ).pack(anchor="w", pady=(3, 0))
-        ttk.Button(header, text="Refresh Devices", style="Quiet.TButton", command=lambda: self.refresh_devices(silent=False)).pack(side="right", padx=(8, 0))
-        ttk.Button(header, text="Install Optional Driver", style="Quiet.TButton", command=self._install_optional_driver).pack(side="right")
+        title = ctk.CTkLabel(
+            sidebar,
+            text=APP_TITLE,
+            text_color="#f8fafc",
+            font=ctk.CTkFont(family="Segoe UI", size=25, weight="bold"),
+            anchor="w",
+        )
+        title.grid(row=0, column=0, sticky="ew", padx=22, pady=(28, 4))
+        ctk.CTkLabel(
+            sidebar,
+            text="Live Windows audio routed to every output you choose.",
+            text_color="#cbd5e1",
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            justify="left",
+            wraplength=224,
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 26))
 
-        content_area = ttk.Frame(shell, style="Shell.TFrame")
-        content_area.pack(fill="both", expand=True)
-        self.main_canvas = tk.Canvas(content_area, bg="#edf2f7", highlightthickness=0)
-        main_scrollbar = ttk.Scrollbar(
-            content_area,
-            orient="vertical",
-            command=self.main_canvas.yview,
-            style="App.Vertical.TScrollbar",
+        self.start_button = ctk.CTkButton(
+            sidebar,
+            text="Start Routing",
+            command=self.toggle_router,
+            height=44,
+            corner_radius=10,
+            fg_color="#2563eb",
+            hover_color="#1d4ed8",
+            text_color="#ffffff",
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
         )
-        root = ttk.Frame(self.main_canvas, style="Shell.TFrame", padding=18)
-        self.main_frame_id = self.main_canvas.create_window((0, 0), window=root, anchor="nw")
-        self.main_canvas.configure(yscrollcommand=main_scrollbar.set)
-        self.main_canvas.pack(side="left", fill="both", expand=True)
-        main_scrollbar.pack(side="right", fill="y", padx=(0, 4), pady=8)
-        root.bind(
-            "<Configure>",
-            lambda _event: self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all")),
+        self.start_button.grid(row=2, column=0, sticky="ew", padx=22, pady=(0, 12))
+        ctk.CTkButton(
+            sidebar,
+            text="Refresh Devices",
+            command=lambda: self.refresh_devices(silent=False),
+            height=38,
+            corner_radius=10,
+            fg_color="#1e293b",
+            hover_color="#334155",
+            text_color="#e2e8f0",
+        ).grid(row=3, column=0, sticky="ew", padx=22, pady=(0, 10))
+        ctk.CTkButton(
+            sidebar,
+            text="Install Optional Driver",
+            command=self._install_optional_driver,
+            height=38,
+            corner_radius=10,
+            fg_color="#1e293b",
+            hover_color="#334155",
+            text_color="#e2e8f0",
+        ).grid(row=4, column=0, sticky="ew", padx=22, pady=(0, 10))
+
+        status_panel = ctk.CTkFrame(sidebar, fg_color="#111c2d", corner_radius=14)
+        status_panel.grid(row=6, column=0, sticky="ew", padx=18, pady=(16, 22))
+        ctk.CTkLabel(
+            status_panel,
+            text="Signal",
+            text_color="#94a3b8",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            anchor="w",
+        ).pack(fill="x", padx=14, pady=(14, 6))
+        self.level_bar = ctk.CTkProgressBar(
+            status_panel,
+            height=10,
+            corner_radius=10,
+            fg_color="#1e293b",
+            progress_color="#22c55e",
         )
-        self.main_canvas.bind(
-            "<Configure>",
-            lambda event: self.main_canvas.itemconfigure(self.main_frame_id, width=event.width),
+        self.level_bar.pack(fill="x", padx=14)
+        self.level_bar.set(0)
+        ctk.CTkLabel(
+            status_panel,
+            textvariable=self.status_var,
+            text_color="#dbeafe",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            justify="left",
+            wraplength=220,
+            anchor="w",
+        ).pack(fill="x", padx=14, pady=(12, 14))
+
+        root = ctk.CTkScrollableFrame(
+            self,
+            corner_radius=0,
+            fg_color="#f8fafc",
+            scrollbar_fg_color="#e2e8f0",
+            scrollbar_button_color="#64748b",
+            scrollbar_button_hover_color="#475569",
         )
-        self._activate_scroll_canvas(self.main_canvas)
-        self.main_canvas.bind("<Enter>", lambda _event: self._activate_scroll_canvas(self.main_canvas))
-        root.bind("<Enter>", lambda _event: self._activate_scroll_canvas(self.main_canvas))
-        self.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.bind_all("<Button-4>", self._on_mousewheel)
-        self.bind_all("<Button-5>", self._on_mousewheel)
+        root.grid(row=0, column=1, sticky="nsew")
+        root.grid_columnconfigure(0, weight=1)
+
+        header = ctk.CTkFrame(root, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=28, pady=(26, 12))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            header,
+            text="Routing Console",
+            text_color="#0f172a",
+            font=ctk.CTkFont(family="Segoe UI", size=28, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew")
+        ctk.CTkLabel(
+            header,
+            text="Pick a loopback source, add output devices, and tune every stream in real time.",
+            text_color="#64748b",
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", pady=(4, 0))
 
         devices, devices_content = self._section(
             root,
+            1,
             "Capture",
             "Choose the live loopback stream that Audio Splitter should mirror.",
         )
-        devices.pack(fill="x", pady=(0, 12))
-        self._combo_row(devices_content, 0, "Loopback source", self.source_var, "source_combo")
+        self._option_row(devices_content, 0, "Loopback source", self.source_var, "source_combo")
 
         outputs, outputs_content = self._section(
             root,
+            2,
             "Additional Outputs",
             "Add one row per playback device. Each row has its own live volume.",
         )
-        outputs.pack(fill="both", expand=True, pady=(0, 12))
-        outputs_header = ttk.Frame(outputs_content, style="Card.TFrame")
-        outputs_header.pack(fill="x", pady=(0, 10))
-        ttk.Button(outputs_header, text="Add Output", style="Action.TButton", command=self.add_output_row).pack(side="right")
-
-        outputs_body = ttk.Frame(outputs_content, style="Card.TFrame")
-        outputs_body.pack(fill="both", expand=True)
-        self.outputs_canvas = tk.Canvas(outputs_body, bg="#ffffff", highlightthickness=0, height=210)
-        outputs_scrollbar = ttk.Scrollbar(
-            outputs_body,
-            orient="vertical",
-            command=self.outputs_canvas.yview,
-            style="App.Vertical.TScrollbar",
+        outputs_content.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            outputs,
+            text="Add Output",
+            command=self.add_output_row,
+            width=128,
+            height=36,
+            corner_radius=9,
+            fg_color="#0f766e",
+            hover_color="#115e59",
+            text_color="#ffffff",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+        ).grid(row=0, column=1, sticky="e", padx=(12, 28), pady=(22, 0))
+        self.outputs_frame = ctk.CTkScrollableFrame(
+            outputs_content,
+            height=286,
+            corner_radius=12,
+            fg_color="transparent",
+            scrollbar_fg_color="#e2e8f0",
+            scrollbar_button_color="#64748b",
+            scrollbar_button_hover_color="#475569",
         )
-        self.outputs_frame = ttk.Frame(self.outputs_canvas, style="Card.TFrame")
-        self.outputs_frame_id = self.outputs_canvas.create_window((0, 0), window=self.outputs_frame, anchor="nw")
-        self.outputs_canvas.configure(yscrollcommand=outputs_scrollbar.set)
-        self.outputs_canvas.pack(side="left", fill="both", expand=True)
-        outputs_scrollbar.pack(side="right", fill="y", padx=(6, 0))
-        self.outputs_frame.bind(
-            "<Configure>",
-            lambda _event: self.outputs_canvas.configure(scrollregion=self.outputs_canvas.bbox("all")),
-        )
-        self.outputs_canvas.bind(
-            "<Configure>",
-            lambda event: self.outputs_canvas.itemconfigure(self.outputs_frame_id, width=event.width),
-        )
-        self.outputs_canvas.bind("<Enter>", lambda _event: self._activate_scroll_canvas(self.outputs_canvas))
-        self.outputs_frame.bind("<Enter>", lambda _event: self._activate_scroll_canvas(self.outputs_canvas))
-        self.outputs_canvas.bind("<Leave>", lambda _event: self._activate_scroll_canvas(self.main_canvas))
+        self.outputs_frame.grid(row=0, column=0, sticky="nsew")
 
         settings, settings_content = self._section(
             root,
+            3,
             "Routing Settings",
             "Latency and guardrails for the live audio stream.",
         )
-        settings.pack(fill="x", pady=(0, 12))
         self._master_volume_row(settings_content)
 
-        ttk.Label(settings_content, text="Sample rate", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
-        self.sample_rate_combo = ttk.Combobox(
+        ctk.CTkLabel(
             settings_content,
-            textvariable=self.sample_rate_var,
-            values=("44100", "48000"),
-            width=10,
-            state="readonly",
-        )
-        self.sample_rate_combo.grid(row=1, column=1, sticky="w", pady=6)
-        self.sample_rate_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("sample rate"))
-
-        ttk.Label(settings_content, text="Block size", style="Field.TLabel").grid(row=1, column=2, sticky="w", padx=(28, 12), pady=6)
-        self.block_size_combo = ttk.Combobox(
+            text="Sample rate",
+            text_color="#334155",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="w", padx=(0, 14), pady=(12, 8))
+        self.sample_rate_combo = ctk.CTkSegmentedButton(
             settings_content,
-            textvariable=self.block_size_var,
-            values=("128", "256", "512", "1024", "2048", "4096"),
-            width=10,
-            state="readonly",
+            variable=self.sample_rate_var,
+            values=["44100", "48000"],
+            command=lambda _value: self._schedule_live_restart("sample rate"),
+            height=34,
+            corner_radius=9,
+            fg_color="#e2e8f0",
+            selected_color="#2563eb",
+            selected_hover_color="#1d4ed8",
+            unselected_color="#e2e8f0",
+            unselected_hover_color="#cbd5e1",
         )
-        self.block_size_combo.grid(row=1, column=3, sticky="w", pady=6)
-        self.block_size_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("block size"))
+        self.sample_rate_combo.grid(row=1, column=1, sticky="w", pady=(12, 8))
 
-        ttk.Checkbutton(
+        ctk.CTkLabel(
+            settings_content,
+            text="Block size",
+            text_color="#334155",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            anchor="w",
+        ).grid(row=2, column=0, sticky="w", padx=(0, 14), pady=8)
+        self.block_size_combo = ctk.CTkSegmentedButton(
+            settings_content,
+            variable=self.block_size_var,
+            values=["128", "256", "512", "1024", "2048", "4096"],
+            command=lambda _value: self._schedule_live_restart("block size"),
+            height=34,
+            corner_radius=9,
+            fg_color="#e2e8f0",
+            selected_color="#2563eb",
+            selected_hover_color="#1d4ed8",
+            unselected_color="#e2e8f0",
+            unselected_hover_color="#cbd5e1",
+        )
+        self.block_size_combo.grid(row=2, column=1, sticky="ew", pady=8)
+
+        ctk.CTkCheckBox(
             settings_content,
             text="Allow output back into the captured source device",
             variable=self.allow_feedback_var,
             command=lambda: self._schedule_live_restart("feedback setting"),
-        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(10, 0))
+            fg_color="#2563eb",
+            hover_color="#1d4ed8",
+            border_color="#94a3b8",
+            text_color="#334155",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(14, 4))
 
         note = (
             "For the cleanest no-driver fallback, set Windows to play through one device you can already hear, "
-            "choose that device's Loopback source here, then route only to the other device. "
+            "choose that device's loopback source here, then route only to the other device. "
             "Do not also route back into the captured source unless you need to test it."
         )
-        ttk.Label(settings_content, text=note, style="Hint.TLabel", wraplength=720).grid(
-            row=3,
-            column=0,
-            columnspan=4,
-            sticky="w",
-            pady=(8, 0),
-        )
+        ctk.CTkLabel(
+            settings_content,
+            text=note,
+            text_color="#64748b",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            justify="left",
+            wraplength=720,
+            anchor="w",
+        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
-        bottom = ttk.Frame(shell, style="Status.TFrame", padding=(14, 12))
-        bottom.pack(fill="x", padx=18, pady=(0, 18))
-        self.start_button = ttk.Button(bottom, text="Start", style="Primary.TButton", command=self.toggle_router)
-        self.start_button.pack(side="left")
-        ttk.Progressbar(
-            bottom,
-            variable=self.level_var,
-            maximum=100,
-            length=210,
-            style="Level.Horizontal.TProgressbar",
-        ).pack(side="left", padx=(14, 12))
-        ttk.Label(bottom, textvariable=self.status_var, style="Status.TLabel").pack(side="left", fill="x", expand=True)
-
-    def _section(self, parent: ttk.Frame, title: str, subtitle: str) -> tuple[ttk.Frame, ttk.Frame]:
-        section = ttk.Frame(parent, style="Card.TFrame", padding=16)
-        ttk.Label(section, text=title, style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(section, text=subtitle, style="CardSub.TLabel").pack(anchor="w", pady=(2, 12))
-        content = ttk.Frame(section, style="Card.TFrame")
-        content.pack(fill="both", expand=True)
+    def _section(
+        self,
+        parent: ctk.CTkScrollableFrame,
+        row: int,
+        title: str,
+        subtitle: str,
+    ) -> tuple[ctk.CTkFrame, ctk.CTkFrame]:
+        section = ctk.CTkFrame(parent, fg_color="#ffffff", border_color="#e2e8f0", border_width=1, corner_radius=16)
+        section.grid(row=row, column=0, sticky="ew", padx=28, pady=(0, 16))
+        section.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            section,
+            text=title,
+            text_color="#0f172a",
+            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 2))
+        ctk.CTkLabel(
+            section,
+            text=subtitle,
+            text_color="#64748b",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 14))
+        content = ctk.CTkFrame(section, fg_color="transparent")
+        content.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=18, pady=(0, 18))
+        content.grid_columnconfigure(1, weight=1)
         return section, content
 
-    def _combo_row(self, parent: ttk.Frame, row: int, label: str, var: tk.StringVar, attr_name: str) -> None:
-        ttk.Label(parent, text=label, style="Field.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 14), pady=6)
-        combo = ttk.Combobox(parent, textvariable=var, state="readonly", width=82)
+    def _option_row(
+        self,
+        parent: ctk.CTkFrame,
+        row: int,
+        label: str,
+        var: tk.StringVar,
+        attr_name: str,
+    ) -> None:
+        ctk.CTkLabel(
+            parent,
+            text=label,
+            text_color="#334155",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            anchor="w",
+        ).grid(row=row, column=0, sticky="w", padx=(0, 14), pady=6)
+        combo = ctk.CTkOptionMenu(
+            parent,
+            variable=var,
+            values=["Loading devices..."],
+            command=lambda _value: self._schedule_live_restart(label.lower()),
+            height=36,
+            corner_radius=9,
+            fg_color="#f8fafc",
+            button_color="#2563eb",
+            button_hover_color="#1d4ed8",
+            dropdown_fg_color="#ffffff",
+            dropdown_hover_color="#dbeafe",
+            dropdown_text_color="#0f172a",
+            text_color="#0f172a",
+        )
         combo.grid(row=row, column=1, sticky="ew", pady=6)
-        combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart(label.lower()))
-        parent.columnconfigure(1, weight=1)
         setattr(self, attr_name, combo)
 
-    def _master_volume_row(self, parent: ttk.Frame) -> None:
-        value_label = ttk.Label(parent, text=f"{int(self.master_volume_var.get())}%", style="Field.TLabel", width=6)
+    def _master_volume_row(self, parent: ctk.CTkFrame) -> None:
+        value_label = ctk.CTkLabel(
+            parent,
+            text=f"{int(self.master_volume_var.get())}%",
+            text_color="#0f172a",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            width=52,
+            anchor="e",
+        )
 
-        def update_value(_event=None) -> None:
+        def update_value(_value=None) -> None:
             value_label.configure(text=f"{int(self.master_volume_var.get())}%")
             self._apply_live_volumes()
 
-        ttk.Label(parent, text="Main output volume", style="Field.TLabel").grid(
-            row=0,
-            column=0,
-            sticky="w",
-            padx=(0, 12),
-            pady=(0, 10),
-        )
-        scale = ttk.Scale(parent, variable=self.master_volume_var, from_=0, to=100, command=update_value)
-        scale.grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 10))
-        value_label.grid(row=0, column=3, sticky="e", padx=(12, 0), pady=(0, 10))
+        ctk.CTkLabel(
+            parent,
+            text="Main output volume",
+            text_color="#334155",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 14), pady=(0, 12))
+        ctk.CTkSlider(
+            parent,
+            variable=self.master_volume_var,
+            from_=0,
+            to=100,
+            number_of_steps=100,
+            command=update_value,
+            height=18,
+            button_color="#2563eb",
+            button_hover_color="#1d4ed8",
+            progress_color="#2563eb",
+            fg_color="#e2e8f0",
+        ).grid(row=0, column=1, sticky="ew", pady=(0, 12))
+        value_label.grid(row=0, column=2, sticky="e", padx=(12, 0), pady=(0, 12))
         parent.columnconfigure(1, weight=1)
+
+    def _set_level(self, value: float) -> None:
+        clamped = max(0.0, min(1.0, float(value)))
+        self.level_var.set(clamped * 100)
+        if hasattr(self, "level_bar"):
+            self.level_bar.set(clamped)
 
     def add_output_row(self, schedule_restart: bool = True) -> None:
         row_number = len(self.output_rows) + 1
         device_var = tk.StringVar(value=NONE_LABEL)
         volume_var = tk.DoubleVar(value=80)
-        frame = ttk.Frame(self.outputs_frame, style="OutputRow.TFrame", padding=(12, 10))
+        frame = ctk.CTkFrame(
+            self.outputs_frame,
+            fg_color="#f8fafc",
+            border_color="#e2e8f0",
+            border_width=1,
+            corner_radius=12,
+        )
         frame.pack(fill="x", padx=(0, 8), pady=(0, 10))
+        frame.grid_columnconfigure(1, weight=1)
 
-        label = ttk.Label(frame, text=f"Output {row_number}", style="Row.TLabel", width=10)
+        label = ctk.CTkLabel(
+            frame,
+            text=f"Output {row_number}",
+            text_color="#0f172a",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            anchor="w",
+            width=86,
+        )
         label.grid(
             row=0,
             column=0,
             rowspan=2,
             sticky="w",
-            padx=(0, 12),
+            padx=(14, 12),
+            pady=12,
         )
-        combo = ttk.Combobox(
+        combo = ctk.CTkOptionMenu(
             frame,
-            textvariable=device_var,
-            state="readonly",
-            width=58,
-            values=[device.label for device in self.outputs],
+            variable=device_var,
+            values=[device.label for device in self.outputs] or [NONE_LABEL],
+            command=lambda _value: self._schedule_live_restart("output selection"),
+            height=34,
+            corner_radius=9,
+            fg_color="#ffffff",
+            button_color="#2563eb",
+            button_hover_color="#1d4ed8",
+            dropdown_fg_color="#ffffff",
+            dropdown_hover_color="#dbeafe",
+            dropdown_text_color="#0f172a",
+            text_color="#0f172a",
         )
-        combo.grid(row=0, column=1, sticky="ew", pady=(0, 6))
-        combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("output selection"))
+        combo.grid(row=0, column=1, sticky="ew", pady=(12, 7))
 
-        value_label = ttk.Label(frame, text=f"{int(volume_var.get())}%", style="RowValue.TLabel", width=6)
+        value_label = ctk.CTkLabel(
+            frame,
+            text=f"{int(volume_var.get())}%",
+            text_color="#0f172a",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            width=54,
+            anchor="e",
+        )
 
-        def update_value(_event=None) -> None:
+        def update_value(_value=None) -> None:
             value_label.configure(text=f"{int(volume_var.get())}%")
             self._apply_live_volumes()
 
         volume_var.trace_add("write", lambda *_args: self._apply_live_volumes())
-        scale = ttk.Scale(frame, variable=volume_var, from_=0, to=500, command=update_value)
-        scale.grid(row=1, column=1, sticky="ew")
-        value_label.grid(row=1, column=2, sticky="e", padx=(12, 8))
-        remove_button = ttk.Button(frame, text="Remove", style="Danger.TButton", command=lambda: self.remove_output_row(frame))
-        remove_button.grid(row=0, column=2, sticky="e", padx=(12, 8))
-
-        frame.columnconfigure(1, weight=1)
+        ctk.CTkSlider(
+            frame,
+            variable=volume_var,
+            from_=0,
+            to=500,
+            number_of_steps=500,
+            command=update_value,
+            height=18,
+            button_color="#0f766e",
+            button_hover_color="#115e59",
+            progress_color="#0f766e",
+            fg_color="#dbeafe",
+        ).grid(row=1, column=1, sticky="ew", pady=(0, 12))
+        value_label.grid(row=1, column=2, sticky="e", padx=(12, 12), pady=(0, 12))
+        remove_button = ctk.CTkButton(
+            frame,
+            text="Remove",
+            command=lambda: self.remove_output_row(frame),
+            width=86,
+            height=32,
+            corner_radius=9,
+            fg_color="#ef4444",
+            hover_color="#dc2626",
+            text_color="#ffffff",
+        )
+        remove_button.grid(row=0, column=2, sticky="e", padx=(12, 12), pady=(12, 7))
         self.output_rows.append(
             OutputRow(
                 frame=frame,
@@ -635,7 +791,7 @@ class AudioSplitterApp(tk.Tk):
         if schedule_restart:
             self._schedule_live_restart("output list")
 
-    def remove_output_row(self, frame: ttk.Frame) -> None:
+    def remove_output_row(self, frame: ctk.CTkFrame) -> None:
         if len(self.output_rows) <= 1:
             return
         for index, row in enumerate(self.output_rows):
@@ -650,24 +806,6 @@ class AudioSplitterApp(tk.Tk):
         for index, row in enumerate(self.output_rows, start=1):
             row.label.configure(text=f"Output {index}")
             row.remove_button.configure(state="disabled" if len(self.output_rows) <= 1 else "normal")
-
-    def _activate_scroll_canvas(self, canvas: tk.Canvas) -> None:
-        self.active_scroll_canvas = canvas
-
-    def _on_mousewheel(self, event: tk.Event) -> str | None:
-        canvas = self.active_scroll_canvas
-        if canvas is None:
-            return
-        if getattr(event, "num", None) == 4:
-            direction = -1
-        elif getattr(event, "num", None) == 5:
-            direction = 1
-        else:
-            direction = int(-1 * (event.delta / 120))
-            if direction == 0 and event.delta != 0:
-                direction = -1 if event.delta > 0 else 1
-        canvas.yview_scroll(direction, "units")
-        return "break"
 
     def refresh_devices(self, silent: bool = False) -> bool:
         try:
@@ -729,9 +867,10 @@ class AudioSplitterApp(tk.Tk):
         changed = signature != self.device_signature
         self.device_signature = signature
 
-        self.source_combo.configure(values=[device.label for device in self.sources])
+        source_values = [device.label for device in self.sources] or ["No loopback sources found"]
+        self.source_combo.configure(values=source_values)
         for row in self.output_rows:
-            row.combo.configure(values=[device.label for device in self.outputs])
+            row.combo.configure(values=[device.label for device in self.outputs] or [NONE_LABEL])
 
         self._restore_or_default(old_source, self.sources, self.source_var, self._default_source_id(default_speaker.id))
         for old_output, row in zip(old_output_rows, self.output_rows):
@@ -807,7 +946,7 @@ class AudioSplitterApp(tk.Tk):
             master_volume=self.master_volume_var,
         )
         self.router.start()
-        self.start_button.configure(text="Stop")
+        self.start_button.configure(text="Stop Routing", fg_color="#dc2626", hover_color="#b91c1c")
         self.status_var.set("Routing current audio...")
         return True
 
@@ -818,8 +957,8 @@ class AudioSplitterApp(tk.Tk):
         if self.router:
             self.router.stop()
         self.router = None
-        self.level_var.set(0)
-        self.start_button.configure(text="Start")
+        self._set_level(0)
+        self.start_button.configure(text="Start Routing", fg_color="#2563eb", hover_color="#1d4ed8")
         self.status_var.set(status)
 
     def _schedule_live_restart(self, reason: str) -> None:
@@ -855,7 +994,7 @@ class AudioSplitterApp(tk.Tk):
                 break
 
             if self.router and self.router.is_alive():
-                self.level_var.set(self.router.level * 100)
+                self._set_level(self.router.level)
                 seconds = self.router.frames_routed / max(1, int(self.sample_rate_var.get()))
                 skip_text = f", {self.router.skipped_blocks} stale block(s) skipped" if self.router.skipped_blocks else ""
                 peak_text = ", hot input" if self.router.peak > 0.98 else ""

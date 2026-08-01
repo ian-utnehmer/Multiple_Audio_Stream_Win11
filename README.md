@@ -9,6 +9,8 @@ It has one unified release with two modes:
 
 The main audio engine is designed to stay current: it reads the newest available loopback audio, skips stale queued blocks instead of drifting behind, and applies per-output volume changes immediately.
 
+The desktop interface uses CustomTkinter for a modern Windows-friendly control surface with a fixed status sidebar, scrollable routing workspace, and scrollable output list.
+
 ## Motivation
 
 Windows Volume Mixer can choose an app's output device and app volume, but Windows does not include a small built-in tool for mirroring one playback stream to multiple real output devices with separate volume sliders for each output.
@@ -26,6 +28,7 @@ This app also came from frustration with the driver-heavy setup and cleanup proc
 - Restart the live stream automatically when source, output, sample rate, or block size changes.
 - Keep the device list refreshed while the app is open.
 - Stop routing if a selected device disappears.
+- Use a modern desktop UI with styled scrollbars, segmented controls, and responsive routing controls.
 - Avoid software backlog by keeping only the newest audio block per output.
 - Provide a no-driver default mode for the cleanest day-to-day use.
 - Provide an optional virtual driver mode for a selectable Windows endpoint named `Splitter Output`.
@@ -37,6 +40,7 @@ For normal no-driver use:
 - Windows 10 or Windows 11
 - Native Windows Python 3
 - Windows audio devices visible to WASAPI
+- Python packages from `requirements.txt`: `soundcard`, `numpy`, and `customtkinter`
 
 Do not run the app from WSL. WSL cannot reliably see or route native Windows audio devices.
 
@@ -205,7 +209,7 @@ The setup script handles a known WDK validation-tool failure by retrying without
 
 ## Repository Layout
 
-- `audio_splitter.py`: main Tkinter UI and low-latency audio router
+- `audio_splitter.py`: main CustomTkinter UI and low-latency audio router
 - `launch_ui.py`: splash launcher that prepares `.venv` and opens the app
 - `run_windows.bat`: normal Windows launcher
 - `setup_windows.bat`: direct optional-driver setup launcher
