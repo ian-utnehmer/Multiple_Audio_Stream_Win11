@@ -15,6 +15,7 @@ APP_TITLE = "Dual Output Router"
 DEFAULT_SAMPLE_RATE = 48000
 DEFAULT_BLOCK_SIZE = 1024
 DEVICE_REFRESH_MS = 2000
+OUTPUT_QUEUE_BLOCKS = 8
 
 
 @dataclass(frozen=True)
@@ -43,13 +44,21 @@ class AudioRouter:
         self.output_b = output_b
         self.sample_rate = sample_rate
         self.block_size = block_size
-        self.volume_a = volume_a
-        self.volume_b = volume_b
+        self._initial_volume_a = volume_a
+        self._initial_volume_b = volume_b
         self.stop_event = threading.Event()
         self.error_queue: queue.Queue[str] = queue.Queue()
         self.level = 0.0
+        self.peak = 0.0
+        self.dropped_blocks = 0
         self.frames_routed = 0
         self._thread: threading.Thread | None = None
+        self._output_threads: list[threading.Thread] = []
+        self._queue_a: queue.Queue[object] = queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS)
+        self._queue_b: queue.Queue[object] = queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS)
+        self._volume_lock = threading.Lock()
+        self._volume_a = max(0.0, min(1.0, self._initial_volume_a()))
+        self._volume_b = max(0.0, min(1.0, self._initial_volume_b()))
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="audio-router", daemon=True)
@@ -57,11 +66,20 @@ class AudioRouter:
 
     def stop(self) -> None:
         self.stop_event.set()
+        self._signal_outputs_to_stop()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.5)
+        for thread in self._output_threads:
+            if thread.is_alive():
+                thread.join(timeout=2.5)
 
     def is_alive(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
+
+    def set_volumes(self, volume_a: float, volume_b: float) -> None:
+        with self._volume_lock:
+            self._volume_a = max(0.0, min(1.0, float(volume_a)))
+            self._volume_b = max(0.0, min(1.0, float(volume_b)))
 
     def _run(self) -> None:
         try:
@@ -71,26 +89,15 @@ class AudioRouter:
             thread_com = self._initialize_com_for_thread(sc)
 
             source = sc.get_microphone(id=self.source.id, include_loopback=self.source.is_loopback)
-            speaker_a = sc.get_speaker(self.output_a.id)
-            speaker_b = sc.get_speaker(self.output_b.id)
 
             capture_channels = self._usable_channels(self.source.channels)
-            channels_a = self._usable_channels(self.output_a.channels)
-            channels_b = self._usable_channels(self.output_b.channels)
+            self._start_output_threads()
 
             with source.recorder(
                 samplerate=self.sample_rate,
                 channels=capture_channels,
                 blocksize=self.block_size,
-            ) as recorder, speaker_a.player(
-                samplerate=self.sample_rate,
-                channels=channels_a,
-                blocksize=self.block_size,
-            ) as player_a, speaker_b.player(
-                samplerate=self.sample_rate,
-                channels=channels_b,
-                blocksize=self.block_size,
-            ) as player_b:
+            ) as recorder:
                 while not self.stop_event.is_set():
                     data = recorder.record(numframes=self.block_size)
                     if data.size == 0:
@@ -98,11 +105,95 @@ class AudioRouter:
                         continue
 
                     self.level = float(min(1.0, math.sqrt(float(np.mean(np.square(data)))) * 4.0))
-                    player_a.play(self._for_output(data, channels_a, self.volume_a()))
-                    player_b.play(self._for_output(data, channels_b, self.volume_b()))
+                    self.peak = float(min(1.0, np.max(np.abs(data))))
+                    self._enqueue_for_outputs(data)
                     self.frames_routed += int(data.shape[0])
         except Exception:
             self.error_queue.put(traceback.format_exc())
+        finally:
+            self.stop_event.set()
+            self._signal_outputs_to_stop()
+
+    def _start_output_threads(self) -> None:
+        self._output_threads = [
+            threading.Thread(
+                target=self._play_output,
+                name="audio-output-a",
+                args=(self.output_a, self._queue_a, "Output A"),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=self._play_output,
+                name="audio-output-b",
+                args=(self.output_b, self._queue_b, "Output B"),
+                daemon=True,
+            ),
+        ]
+        for thread in self._output_threads:
+            thread.start()
+
+    def _play_output(self, device: DeviceChoice, output_queue: queue.Queue[object], label: str) -> None:
+        try:
+            import soundcard as sc
+
+            thread_com = self._initialize_com_for_thread(sc)
+            speaker = sc.get_speaker(device.id)
+            channels = self._usable_channels(device.channels)
+
+            with speaker.player(
+                samplerate=self.sample_rate,
+                channels=channels,
+                blocksize=self.block_size,
+            ) as player:
+                while not self.stop_event.is_set():
+                    try:
+                        item = output_queue.get(timeout=0.2)
+                    except queue.Empty:
+                        continue
+                    if item is None:
+                        break
+
+                    volume = self._volume_for_label(label)
+                    player.play(self._for_output(item, channels, volume))
+        except Exception:
+            if not self.stop_event.is_set():
+                self.error_queue.put(f"{label} failed:\n{traceback.format_exc()}")
+            self.stop_event.set()
+
+    def _enqueue_for_outputs(self, data: object) -> None:
+        self._put_latest(self._queue_a, data)
+        self._put_latest(self._queue_b, data)
+
+    def _put_latest(self, output_queue: queue.Queue[object], data: object) -> None:
+        try:
+            output_queue.put_nowait(data)
+        except queue.Full:
+            self.dropped_blocks += 1
+            try:
+                output_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                output_queue.put_nowait(data)
+            except queue.Full:
+                pass
+
+    def _signal_outputs_to_stop(self) -> None:
+        for output_queue in (self._queue_a, self._queue_b):
+            try:
+                output_queue.put_nowait(None)
+            except queue.Full:
+                try:
+                    output_queue.get_nowait()
+                    output_queue.put_nowait(None)
+                except queue.Empty:
+                    pass
+                except queue.Full:
+                    pass
+
+    def _volume_for_label(self, label: str) -> float:
+        with self._volume_lock:
+            return self._volume_a if label == "Output A" else self._volume_b
 
     @staticmethod
     def _initialize_com_for_thread(sc_module: object) -> object | None:
@@ -131,7 +222,7 @@ class AudioRouter:
     def _for_output(data, channels: int, volume: float):
         import numpy as np
 
-        volume = max(0.0, min(2.0, float(volume)))
+        volume = max(0.0, min(1.0, float(volume)))
         routed = np.asarray(data, dtype="float32")
         if routed.ndim == 1:
             routed = routed[:, None]
@@ -274,7 +365,7 @@ class DualOutputApp(tk.Tk):
             value.configure(text=f"{int(var.get())}%")
 
         ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=8)
-        scale = ttk.Scale(parent, variable=var, from_=0, to=150, command=update_value)
+        scale = ttk.Scale(parent, variable=var, from_=0, to=100, command=update_value)
         scale.grid(row=row, column=1, sticky="ew", pady=8)
         value.grid(row=row, column=2, sticky="e", padx=(12, 0), pady=8)
         parent.columnconfigure(1, weight=1)
@@ -423,6 +514,7 @@ class DualOutputApp(tk.Tk):
             volume_a=lambda: self.volume_a_var.get() / 100.0,
             volume_b=lambda: self.volume_b_var.get() / 100.0,
         )
+        self.router.set_volumes(self.volume_a_var.get() / 100.0, self.volume_b_var.get() / 100.0)
         self.router.start()
         self.start_button.configure(text="Stop")
         self.status_var.set("Routing audio...")
@@ -444,9 +536,12 @@ class DualOutputApp(tk.Tk):
                 break
 
             if self.router and self.router.is_alive():
+                self.router.set_volumes(self.volume_a_var.get() / 100.0, self.volume_b_var.get() / 100.0)
                 self.level_var.set(self.router.level * 100)
                 seconds = self.router.frames_routed / max(1, int(self.sample_rate_var.get()))
-                self.status_var.set(f"Routing audio... {seconds:,.1f}s processed")
+                drop_text = f", {self.router.dropped_blocks} dropped block(s)" if self.router.dropped_blocks else ""
+                peak_text = ", hot input" if self.router.peak > 0.98 else ""
+                self.status_var.set(f"Routing audio... {seconds:,.1f}s processed{drop_text}{peak_text}")
             elif self.router:
                 self._stop_router()
 

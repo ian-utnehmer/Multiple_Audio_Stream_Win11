@@ -9,6 +9,7 @@ A small Windows Python app that captures an audio stream and plays it to two dif
 - Control each routed output's volume separately.
 - Keep the device lists current while the app is open.
 - Stop routing with a warning if a selected device disconnects.
+- Route each output through its own playback worker so one slow device is less likely to distort the other.
 - Run without a custom audio driver.
 
 ## Important Windows audio note
@@ -16,6 +17,8 @@ A small Windows Python app that captures an audio stream and plays it to two dif
 Windows does not let a normal app create a selectable playback device by itself. To make a "some audio source" output appear in Windows Sound settings or in a game's audio output list, you need a virtual audio driver/endpoint such as VB-CABLE, Virtual Audio Cable, or a similar tool.
 
 Once that virtual endpoint exists, this app can use it as the source and route its audio to two real devices.
+
+Creating a native Windows playback device named something like `SPLITTER OUTPUT` is possible, but it is a driver project, not a small Python/Tkinter app feature. It would need a Windows virtual audio driver, an INF installer, and driver signing before Windows 11 will treat it like a real selectable output device.
 
 If you capture the loopback of the same device you are also playing into, you can create echo or feedback.
 
@@ -58,5 +61,7 @@ py -3 -m venv .venv
 
 - Start with `48000` sample rate and `1024` block size.
 - If audio crackles, try block size `2048` or `4096`.
+- The app limits output volume sliders to 100%. Boosting above 100% can clip full-scale game/system audio and sound fuzzy.
+- If the status line says `dropped block(s)`, try a larger block size or disconnect/reconnect the Bluetooth device.
 - Bluetooth devices add latency. Two Bluetooth devices may drift slightly over time because each has its own hardware clock.
 - Some DRM-protected app audio may not appear in loopback capture.
