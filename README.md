@@ -1,23 +1,57 @@
 # Audio Splitter
 
-A Windows 10/11 audio splitter with one unified release:
+Audio Splitter is a Windows 10/11 app for mirroring one live audio stream to multiple playback devices with independent per-output volume controls.
 
-- **Default mode:** no virtual driver install. Use an existing Windows playback device as the loopback source and mirror it to as many additional outputs as your machine can handle.
-- **Optional driver mode:** install the branded `Splitter Output` virtual audio endpoint when you want Windows or a game to select a dedicated output device.
+It has one unified release with two modes:
 
-The core audio engine is the low-latency immediate splitter: it reads currently available WASAPI loopback audio, skips stale blocks instead of drifting behind, and applies volume changes live.
+- **No-driver mode:** the default path. Capture an existing Windows playback device through WASAPI loopback and mirror it to as many additional outputs as your PC can handle.
+- **Optional-driver mode:** installs a locally built virtual endpoint named `Splitter Output` so Windows, games, or individual apps can choose that endpoint directly.
+
+The main audio engine is designed to stay current: it reads the newest available loopback audio, skips stale queued blocks instead of drifting behind, and applies per-output volume changes immediately.
 
 ## Motivation
 
-Windows lets you choose an output device and app volume in Volume Mixer, but it does not provide a small built-in tool for mirroring one playback stream to multiple real output devices with separate per-output volume sliders.
+Windows Volume Mixer can choose an app's output device and app volume, but Windows does not include a small built-in tool for mirroring one playback stream to multiple real output devices with separate volume sliders for each output.
 
-[Voicemeeter](https://vb-audio.com/Voicemeeter/) is a powerful, actively maintained virtual mixer, and its Banana/Potato editions support multiple outputs and bus controls. This project is intentionally narrower: a lightweight splitter UI focused on quickly sending the same current audio to any number of selected outputs, each with its own instant volume control, without requiring a virtual driver unless the user explicitly wants a dedicated `Splitter Output` device.
+[Voicemeeter](https://vb-audio.com/Voicemeeter/) is a powerful and actively maintained virtual mixer. Its Banana and Potato editions support multiple outputs and bus controls. This project is intentionally narrower: it is a lightweight splitter UI focused on quickly sending the same current audio to any number of selected outputs, each with its own instant volume control.
 
-This app also came from frustration with the driver-heavy setup and cleanup process around virtual mixer tools. In my own testing, uninstalling and reinstalling Voicemeeter multiple times still left Windows believing pieces were installed, including old virtual drivers/cables that were not removed cleanly. Audio Splitter keeps the default path driver-free, and makes the virtual-driver path optional and explicit.
+This app also came from frustration with the driver-heavy setup and cleanup process around virtual mixer tools. In my own testing, uninstalling and reinstalling Voicemeeter multiple times still left Windows believing pieces were installed, including old virtual drivers/cables that were not removed cleanly. Audio Splitter keeps the default path driver-free and makes the virtual-driver path optional and explicit.
 
-## Run
+## Features
 
-Use native Windows Python, not WSL. WSL cannot reliably see Windows audio devices.
+- Mirror one audio source to any number of selected playback outputs.
+- Add and remove output rows dynamically.
+- Control each output row independently from `0%` to `500%`.
+- Apply volume changes instantly while routing.
+- Restart the live stream automatically when source, output, sample rate, or block size changes.
+- Keep the device list refreshed while the app is open.
+- Stop routing if a selected device disappears.
+- Avoid software backlog by keeping only the newest audio block per output.
+- Provide a no-driver default mode for the cleanest day-to-day use.
+- Provide an optional virtual driver mode for a selectable Windows endpoint named `Splitter Output`.
+
+## Requirements
+
+For normal no-driver use:
+
+- Windows 10 or Windows 11
+- Native Windows Python 3
+- Windows audio devices visible to WASAPI
+
+Do not run the app from WSL. WSL cannot reliably see or route native Windows audio devices.
+
+For optional-driver use:
+
+- Administrator access
+- Visual Studio 2022 or Build Tools
+- Windows SDK
+- Windows Driver Kit
+- Windows test-signing mode enabled
+- Secure Boot disabled while using the locally test-signed driver
+
+The optional driver is a locally test-signed development driver. A production-ready driver requires Microsoft driver signing through the Windows Hardware Developer Program.
+
+## Quick Start
 
 Double-click:
 
@@ -25,54 +59,188 @@ Double-click:
 run_windows.bat
 ```
 
-The launcher opens a small `Launching` window, prepares the Python environment in the background, then opens the splitter UI. The initial console closes after handing off to the launch window.
+The launcher opens a small `Launching` window, prepares the Python environment, installs dependencies into `.venv`, and opens the app. The console window closes after handing off to the launcher UI.
 
 ## No-Driver Mode
 
-This is the fastest path and does not install anything system-level:
+Use this when you want the simplest and most reliable setup.
 
 1. Set Windows or your game to output to one real device you can already hear, such as your headset.
-2. In Audio Splitter, choose that same device as `Capture loopback source`.
-3. Set an additional output row to the other device, such as Bluetooth earbuds.
-4. Click `Add Output` for any extra playback devices you want to mirror to.
-5. Leave the captured/source device output set to `None - source device already plays this audio`.
+2. Open Audio Splitter.
+3. Set `Capture loopback source` to that same device's loopback source.
+4. Set an additional output row to another device, such as Bluetooth earbuds.
+5. Click `Add Output` for any extra playback devices.
+6. Leave the captured/source device's own output row set to `None - source device already plays this audio`.
+7. Click `Start`.
 
-Do not route back into the same device you are capturing from unless you intentionally enable the feedback checkbox. Doing so usually creates doubled, delayed, phasey audio.
+Do not route audio back into the same device you are capturing from unless you intentionally enable the feedback checkbox. Routing back into the captured source usually creates doubled, delayed, phasey, or fuzzy audio.
 
 ## Optional Driver Mode
 
-If you want Windows or a game to show a dedicated output named `Splitter Output`, click `Install Optional Driver` in the app or run:
+Use this when you need Windows, a game, or a specific app to show a dedicated output named `Splitter Output`.
+
+Install from inside the app:
+
+1. Run `run_windows.bat`.
+2. Click `Install Optional Driver`.
+3. Approve the administrator prompt.
+4. Let setup build and install the driver.
+5. Reboot if setup enables test-signing or asks you to reboot.
+
+Or install directly:
 
 ```bat
 setup_windows.bat
 ```
 
-The optional driver setup builds from the MIT-licensed [VirtualDrivers/Virtual-Audio-Driver](https://github.com/VirtualDrivers/Virtual-Audio-Driver), brands the endpoints as `Splitter Output` and `Splitter Input`, and installs the driver with test signing.
+After installation:
 
-This path requires Visual Studio/Build Tools, Windows SDK, WDK, administrator elevation, and possibly a reboot for Windows test-signing mode. The setup script uses Microsoft's documented WinGet WDK configuration when prerequisites are missing.
+1. Open Windows Sound settings.
+2. Set the system output, game output, or app output to `Splitter Output`.
+3. Open Audio Splitter.
+4. Set `Capture loopback source` to `Loopback: Splitter Output`.
+5. If that does not carry audio, try `Input: Splitter Input`.
+6. Add one output row per real playback device.
+7. Click `Start`.
 
-After the driver is installed:
+## App Controls
 
-1. Set Windows or the game to output to `Splitter Output`.
-2. In Audio Splitter, select `Loopback: Splitter Output` as the capture source.
-3. Choose each real playback device in its own additional output row.
-4. Click `Add Output` when you need more output rows.
+- `Capture loopback source`: the Windows audio stream to mirror.
+- `Additional outputs`: dynamic output rows. Each row has its own playback device and volume slider.
+- `Add Output`: creates another output row.
+- `Remove`: deletes an output row.
+- `Output volume`: per-row volume from `0%` to `500%`.
+- `Sample rate`: `44100` or `48000` Hz.
+- `Block size`: lower values reduce software latency; higher values are more tolerant of unstable devices.
+- `Allow output back into the captured source device`: disables the feedback protection guard for testing.
+- `Refresh Devices`: manually refreshes the device list.
+- `Install Optional Driver`: starts the optional virtual-driver setup.
 
-## Latency
+## Latency And Audio Quality
 
-- Start with `48000` Hz and block size `512`.
-- For lower software latency, try `256` or `128`.
-- If you hear crackles, try `1024` or `2048`.
-- Use `4096` only if the smaller values are unstable.
-- The app skips stale audio blocks so it stays current instead of drifting seconds behind.
-- Volume changes apply immediately while routing.
-- Source/output/sample-rate/block-size changes automatically restart the live audio stream.
-- Adding or removing output rows also restarts the live stream automatically.
+Recommended starting point:
 
-## Volume
+- Sample rate: `48000`
+- Block size: `512`
 
-Each additional output row has its own volume slider up to `500%`. Boosting quiet audio can help, but already-loud audio is peak-protected to avoid hard clipping.
+Tuning:
 
-## Limits
+- Try `256` or `128` for lower software latency.
+- Try `1024` or `2048` if you hear crackles.
+- Use `4096` only if smaller values are unstable.
+- Bluetooth devices add hardware/codec delay that software cannot remove.
+- Avoid selecting the same physical device as both the capture source and an additional output.
 
-Bluetooth devices add their own unavoidable playback delay. This app avoids software backlog as much as possible, but it cannot remove Bluetooth codec/device latency.
+The app uses one queue per output and keeps only the newest pending audio block. If an output device falls behind, old blocks are dropped so playback stays current instead of becoming seconds late.
+
+## Volume Behavior
+
+Each output row has an independent volume slider up to `500%`.
+
+Boosting above `100%` can help quiet streams, but it cannot recover detail from audio that is already clipped or distorted. The app applies peak protection so boosted audio does not hard-clip above full scale.
+
+## Device Changes
+
+The app refreshes Windows audio devices while it is open. If a selected source or output disconnects, routing stops and the app tells you which device disappeared. Reconnect the device, click `Refresh Devices` if needed, then start routing again.
+
+## Optional Driver Details
+
+The optional driver setup builds from the MIT-licensed [VirtualDrivers/Virtual-Audio-Driver](https://github.com/VirtualDrivers/Virtual-Audio-Driver), currently pinned to tag `25.7.14` in the setup script, and brands the endpoints as:
+
+- `Splitter Output`
+- `Splitter Input`
+
+Important driver notes:
+
+- A normal Python app cannot create a real Windows playback endpoint by itself. Windows needs an audio driver for `Splitter Output` to appear as a selectable playback device.
+- The included driver flow is for local testing and development.
+- Windows test-signed kernel drivers require test-signing mode.
+- Secure Boot can block test-signing mode.
+- A public production driver should be Microsoft-signed.
+
+See [driver/README.md](driver/README.md) for the driver-specific build, install, uninstall, and troubleshooting notes.
+
+## Troubleshooting
+
+### `Splitter Output` does not appear in Windows
+
+- Reboot once after driver installation.
+- Open Windows Sound settings and check output devices.
+- Open Device Manager and check whether `Splitter Audio Cable` is present.
+- Rerun `setup_windows.bat` from the latest repo state.
+
+### `Splitter Output` appears but no audio is captured
+
+- In Windows Sound settings, make sure the system/game/app output is set to `Splitter Output`.
+- In Audio Splitter, try `Loopback: Splitter Output`.
+- If loopback is silent, try `Input: Splitter Input`.
+- Click `Refresh Devices` after changing Windows output devices.
+
+### Audio sounds fuzzy, phasey, or doubled
+
+- Do not route back into the same physical device you are capturing.
+- In no-driver mode, let the source device play normally and route only to the other devices.
+- Lower the volume if the input is already hot.
+- Try `48000` Hz and block size `512`, then adjust from there.
+
+### Audio is delayed
+
+- Use a smaller block size such as `256` or `128`.
+- Avoid Bluetooth if you need very low latency.
+- Watch for stale block counts in the status line; the app drops stale blocks to stay current.
+
+### Driver setup says test-signing is blocked
+
+Secure Boot is likely enabled. Disable Secure Boot in UEFI/BIOS, boot back into Windows, and rerun setup. If BitLocker or Device Encryption is enabled, save your recovery key before changing Secure Boot settings.
+
+### Driver build mentions `InfVerif.dll` or `ApiValidator.exe`
+
+The setup script handles a known WDK validation-tool failure by retrying without validation-only targets and creating the driver catalog with `inf2cat.exe`.
+
+## Repository Layout
+
+- `audio_splitter.py`: main Tkinter UI and low-latency audio router
+- `launch_ui.py`: splash launcher that prepares `.venv` and opens the app
+- `run_windows.bat`: normal Windows launcher
+- `setup_windows.bat`: direct optional-driver setup launcher
+- `setup_windows.ps1`: elevated setup orchestration
+- `requirements.txt`: Python dependencies
+- `driver/`: optional virtual audio driver scripts and documentation
+
+Generated local files are ignored:
+
+- `.venv/`
+- `__pycache__/`
+- `*.log`
+- `driver/work/`
+- `driver/out/`
+- `driver/.cache/`
+
+## Development
+
+Create or update the environment by running:
+
+```bat
+run_windows.bat
+```
+
+For a quick syntax check from a developer shell:
+
+```powershell
+py -3 -m py_compile audio_splitter.py launch_ui.py
+```
+
+The app depends on:
+
+- `soundcard`
+- `numpy`
+
+## Current External References
+
+- [Windows Volume Mixer and app audio routing](https://support.microsoft.com/en-us/windows/hardware/audio/fix-app-audio-not-working-while-system-sounds-work-in-windows)
+- [VB-Audio Voicemeeter](https://vb-audio.com/Voicemeeter/)
+- [VB-Audio Voicemeeter Banana](https://vb-audio.com/Voicemeeter/banana.htm)
+- [VB-Audio Voicemeeter Potato](https://vb-audio.com/Voicemeeter/potato.htm)
+- [Microsoft: Loading test-signed code](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/the-testsigning-boot-configuration-option)
+- [Microsoft: Driver signing options](https://learn.microsoft.com/en-us/windows-hardware/drivers/dashboard/driver-signing-offerings)
+- [Microsoft: Attestation sign Windows drivers](https://learn.microsoft.com/en-us/windows-hardware/drivers/dashboard/code-signing-attestation)
