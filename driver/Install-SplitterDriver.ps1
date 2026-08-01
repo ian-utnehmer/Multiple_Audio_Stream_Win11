@@ -100,6 +100,8 @@ if (-not $inf -or -not $cat) {
 }
 
 if ($EnableTestSigning) {
+    Write-Warning "Enabling Windows test-signing mode can prevent anti-cheat games from launching."
+    Write-Warning "Disable test-signing later with Disable-TestSigning.ps1 if you need normal game compatibility."
     Write-Host "Enabling Windows test-signing mode. A reboot is usually required."
     & bcdedit /set testsigning on
 }

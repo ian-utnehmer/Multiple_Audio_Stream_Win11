@@ -219,6 +219,12 @@ function Ensure-TestSigning {
         return $false
     }
 
+    Write-Host ""
+    Write-Warning "The optional Splitter Output driver is locally test-signed."
+    Write-Warning "Enabling Windows test-signing mode can prevent anti-cheat games from launching."
+    Write-Warning "Use Disable-TestSigning.ps1 later to return Windows boot settings to normal; the optional driver may stop loading afterward."
+    Write-Host ""
+
     Write-Host "Enabling Windows test-signing mode for the locally built driver..."
     $bcdeditOutput = & bcdedit /set testsigning on 2>&1
     $exitCode = $LASTEXITCODE

@@ -56,6 +56,8 @@ For optional-driver use:
 
 The optional driver is a locally test-signed development driver. A production-ready driver requires Microsoft driver signing through the Windows Hardware Developer Program.
 
+Important gaming note: Windows test-signing mode can prevent games protected by kernel-level anti-cheat systems from launching. Disable test-signing when you need normal anti-cheat compatibility; the optional `Splitter Output` test driver may stop loading afterward. Having both the virtual driver and strict anti-cheat compatibility at the same time requires a production-signed driver.
+
 ## Quick Start
 
 Double-click:
@@ -131,6 +133,7 @@ After installation:
 - `Allow output back into the captured source device`: disables the feedback protection guard for testing.
 - `Refresh Devices`: manually refreshes the device list.
 - `Install Optional Driver`: starts the optional virtual-driver setup.
+- `Disable Test-Signing`: returns Windows boot settings toward normal anti-cheat compatibility after optional-driver testing.
 - `Create Shortcuts`: adds Start Menu and taskbar shortcut entries for Audio Splitter.
 - Main workspace and output rows are scrollable when the window is smaller or many outputs are added.
 - `Quit App`: closes the React host.
@@ -182,6 +185,7 @@ Important driver notes:
 - A normal Python app cannot create a real Windows playback endpoint by itself. Windows needs an audio driver for `Splitter Output` to appear as a selectable playback device.
 - The included driver flow is for local testing and development.
 - Windows test-signed kernel drivers require test-signing mode.
+- Test-signing mode can prevent games with kernel-level anti-cheat from launching.
 - Secure Boot can block test-signing mode.
 - A public production driver should be Microsoft-signed.
 
@@ -220,6 +224,16 @@ See [driver/README.md](driver/README.md) for the driver-specific build, install,
 
 Secure Boot is likely enabled. Disable Secure Boot in UEFI/BIOS, boot back into Windows, and rerun setup. If BitLocker or Device Encryption is enabled, save your recovery key before changing Secure Boot settings.
 
+### Games stopped launching after optional driver setup
+
+Disable test-signing from the app's `Driver Compatibility` panel, or run:
+
+```powershell
+.\Disable-TestSigning.ps1
+```
+
+Restart Windows afterward. This can restore anti-cheat compatibility, but the optional `Splitter Output` test driver may stop loading until test-signing is enabled again.
+
 ### Driver build mentions `InfVerif.dll` or `ApiValidator.exe`
 
 The setup script handles a known WDK validation-tool failure by retrying without validation-only targets and creating the driver catalog with `inf2cat.exe`.
@@ -234,6 +248,7 @@ The setup script handles a known WDK validation-tool failure by retrying without
 - `setup_windows.bat`: direct optional-driver setup launcher
 - `setup_windows.ps1`: elevated setup orchestration
 - `Install-Shortcuts.ps1`: Start Menu/taskbar shortcut helper
+- `Disable-TestSigning.ps1`: disables test-signing/debug/integrity-bypass boot settings for normal anti-cheat compatibility
 - `requirements.txt`: Python dependencies
 - `web/`: React source and committed production build
 - `assets/audio_splitter.ico`: Windows window/taskbar icon

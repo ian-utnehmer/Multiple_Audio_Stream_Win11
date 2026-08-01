@@ -41,6 +41,9 @@ const API = {
       body: JSON.stringify(payload),
     });
   },
+  async disableTestSigning() {
+    return request("/api/disable-test-signing", { method: "POST" });
+  },
   async removeOutput(id) {
     return request(`/api/outputs/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
@@ -69,6 +72,7 @@ function App() {
   const [shortcutStartMenu, setShortcutStartMenu] = useState(true);
   const [shortcutTaskbar, setShortcutTaskbar] = useState(true);
   const [shortcutMessage, setShortcutMessage] = useState("");
+  const [driverMessage, setDriverMessage] = useState("");
   const pollRef = useRef(null);
 
   const applyState = useCallback((nextState, options = {}) => {
@@ -185,6 +189,20 @@ function App() {
     }
   }, [shortcutStartMenu, shortcutTaskbar]);
 
+  const disableTestSigning = useCallback(async () => {
+    try {
+      setBusy("Disabling test-signing");
+      setError("");
+      setDriverMessage("");
+      const result = await API.disableTestSigning();
+      setDriverMessage((result.messages || []).join(" "));
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setBusy("");
+    }
+  }, []);
+
   if (loading) {
     return (
       <main className="loading-shell">
@@ -300,6 +318,19 @@ function App() {
               />
             ))}
           </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-toolbar">
+            <PanelTitle icon={<Cable size={18} />} title="Driver Compatibility" subtitle="Switch Windows back out of test-signing mode." />
+            <button className="danger-button" disabled={Boolean(busy)} onClick={disableTestSigning}>
+              Disable Test-Signing
+            </button>
+          </div>
+          <div className="compatibility-note">
+            The optional Splitter Output driver is locally test-signed. Disabling test-signing can let anti-cheat games launch again, but that driver may stop loading until test-signing is enabled again. No-driver mode can still be used.
+          </div>
+          {driverMessage && <div className="shortcut-message">{driverMessage}</div>}
         </section>
 
         <section className="panel">

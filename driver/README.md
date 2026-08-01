@@ -23,6 +23,18 @@ This is a test-signed driver flow. That means:
 
 This is not a production-signed driver package. Shipping a production driver requires Microsoft driver signing.
 
+## Anti-Cheat Compatibility
+
+The optional driver uses Windows test-signing mode. Some games protected by kernel-level anti-cheat systems refuse to launch while test-signing is enabled.
+
+If games stop launching after optional-driver setup, disable test-signing and restart:
+
+```powershell
+.\Disable-TestSigning.ps1
+```
+
+That can restore normal anti-cheat compatibility, but the local `Splitter Output` test driver may stop loading. Running the virtual driver and strict anti-cheat games at the same time requires a production-signed driver.
+
 ## Build And Install
 
 The simplest path is from the app:

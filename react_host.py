@@ -35,6 +35,7 @@ from audio_splitter import (
 ROOT = Path(__file__).resolve().parent
 WEB_DIST = ROOT / "web" / "dist"
 SHORTCUT_SCRIPT = ROOT / "Install-Shortcuts.ps1"
+DISABLE_TEST_SIGNING_SCRIPT = ROOT / "Disable-TestSigning.ps1"
 SHUTDOWN_DELAY_SECONDS = 0.15
 NONE_KEY = "__none__"
 
@@ -529,6 +530,8 @@ class SplitterRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json(self.control.add_output())
             elif parsed.path == "/api/shortcuts":
                 self._send_json(self._install_shortcuts(self._read_json()))
+            elif parsed.path == "/api/disable-test-signing":
+                self._send_json(self._disable_test_signing())
             elif parsed.path == "/api/shutdown":
                 self._send_json({"ok": True})
                 threading.Timer(SHUTDOWN_DELAY_SECONDS, self.shutdown_event.set).start()
@@ -602,6 +605,36 @@ class SplitterRequestHandler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             return {"ok": False, "messages": ["Shortcut installer returned unreadable output.", result.stdout.strip()]}
         payload["ok"] = True
+        return payload
+
+    def _disable_test_signing(self) -> dict[str, Any]:
+        if not DISABLE_TEST_SIGNING_SCRIPT.exists():
+            return {"ok": False, "messages": ["Disable Test-Signing script was not found."]}
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(DISABLE_TEST_SIGNING_SCRIPT),
+                "-NoPause",
+            ],
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        if result.returncode != 0:
+            return {
+                "ok": False,
+                "messages": ["Could not disable test-signing.", result.stderr.strip() or result.stdout.strip()],
+            }
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"ok": False, "messages": ["Disable Test-Signing returned unreadable output.", result.stdout.strip()]}
+        payload["ok"] = bool(payload.get("ok", True))
         return payload
 
     def _serve_static(self, path: str) -> None:

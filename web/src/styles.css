@@ -396,6 +396,23 @@ select:focus {
   background: #115e59;
 }
 
+.danger-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border-radius: 10px;
+  background: #dc2626;
+  color: #ffffff;
+  padding: 0 14px;
+  font-weight: 800;
+}
+
+.danger-button:hover {
+  background: #b91c1c;
+}
+
 .output-list {
   max-height: 330px;
   overflow: auto;
@@ -528,6 +545,16 @@ input[type="range"] {
   padding: 11px 13px;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.compatibility-note {
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #7c2d12;
+  padding: 12px 13px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 @media (max-width: 920px) {
