@@ -19,6 +19,7 @@ DEVICE_REFRESH_MS = 2000
 OUTPUT_QUEUE_BLOCKS = 8
 MAX_VOLUME = 5.0
 ERROR_LOG = Path(__file__).with_name("router_error.log")
+SPLITTER_SOURCE_NAMES = ("Splitter Input", "Splitter Output")
 
 
 @dataclass(frozen=True)
@@ -462,9 +463,10 @@ class DualOutputApp(tk.Tk):
         if old_source and self._contains_device(self.sources, old_source):
             self.source_var.set(self._matching_device(self.sources, old_source).label)
         elif self.source_var.get() not in source_labels:
+            preferred_sources = self._preferred_splitter_sources(self.sources)
             loopbacks = [source for source in self.sources if source.is_loopback]
             default_loopbacks = [source for source in loopbacks if source.id == default_speaker.id]
-            choices = default_loopbacks or loopbacks or self.sources
+            choices = preferred_sources or default_loopbacks or loopbacks or self.sources
             self.source_var.set(choices[0].label if choices else "")
 
         if old_output_a and self._contains_device(self.outputs, old_output_a):
@@ -614,6 +616,20 @@ class DualOutputApp(tk.Tk):
         rows = [(device.id, "source", device.is_loopback) for device in sources]
         rows.extend((device.id, "output", device.is_loopback) for device in outputs)
         return tuple(sorted(rows))
+
+    @staticmethod
+    def _preferred_splitter_sources(sources: list[DeviceChoice]) -> list[DeviceChoice]:
+        exact = [
+            source
+            for source in sources
+            if any(name.lower() == source.name.lower() for name in SPLITTER_SOURCE_NAMES)
+        ]
+        fuzzy = [
+            source
+            for source in sources
+            if any(name.lower() in source.name.lower() for name in SPLITTER_SOURCE_NAMES)
+        ]
+        return exact or fuzzy
 
     @staticmethod
     def _channel_text(channels: int) -> str:

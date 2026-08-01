@@ -3,3 +3,5 @@ __pycache__/
 *.py[cod]
 .Python
 *.log
+driver/work/
+driver/out/

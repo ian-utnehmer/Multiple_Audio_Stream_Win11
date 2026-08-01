@@ -21,6 +21,8 @@ Once that virtual endpoint exists, this app can use it as the source and route i
 
 Creating a native Windows playback device named something like `SPLITTER OUTPUT` is possible, but it is a driver project, not a small Python/Tkinter app feature. It would need a Windows virtual audio driver, an INF installer, and driver signing before Windows 11 will treat it like a real selectable output device.
 
+This repo now includes a first-pass open-source driver package under `driver/`. It builds from the MIT-licensed VirtualDrivers/Virtual-Audio-Driver project and brands the endpoints as `Splitter Output` and `Splitter Input`. See [driver/README.md](driver/README.md).
+
 If you capture the loopback of the same device you are also playing into, you can create echo or feedback.
 
 ## Use it as a Windows/game output
@@ -32,6 +34,8 @@ For true two-bus control, use a separate capture endpoint:
 3. In Dual Output Router, choose the matching virtual cable recording source. In VB-CABLE this is usually named `Input: CABLE Output`.
 4. Choose your headset as Output A and earbuds as Output B.
 5. Use the two volume sliders independently.
+
+With this repo's driver package, use `Splitter Output` as the Windows/game output, then select `Loopback: Splitter Output` in Dual Output Router. If the driver's capture side works better on your machine, select `Input: Splitter Input` instead.
 
 Without a virtual endpoint, you can still mirror audio from one existing playback device to another, but the original device's volume is controlled by Windows or the source app.
 
