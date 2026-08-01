@@ -3,7 +3,8 @@ param(
     [switch]$NoDriver,
     [switch]$NoStartApp,
     [switch]$EnsureDriverOnly,
-    [switch]$FromLauncher
+    [switch]$FromLauncher,
+    [switch]$StartAppWhenDone
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +28,7 @@ function Restart-AsAdmin {
     if ($NoStartApp) { $args += "-NoStartApp" }
     if ($EnsureDriverOnly) { $args += "-EnsureDriverOnly" }
     if ($FromLauncher) { $args += "-FromLauncher" }
+    if ($StartAppWhenDone) { $args += "-StartAppWhenDone" }
 
     Start-Process powershell.exe -Verb RunAs -ArgumentList $args
 }
@@ -226,7 +228,7 @@ function Install-SplitterDriver {
 }
 
 function Start-App {
-    Start-Process -FilePath "$Root\run_windows.bat" -ArgumentList "--skip-driver-setup" -WorkingDirectory $Root
+    Start-Process -FilePath "$Root\run_windows.bat" -WorkingDirectory $Root
 }
 
 try {
@@ -264,8 +266,12 @@ try {
         exit 0
     }
 
-    if ($FromLauncher -and $EnsureDriverOnly) {
+    if ($FromLauncher -and $EnsureDriverOnly -and $StartAppWhenDone) {
         Start-App
+        exit 101
+    }
+
+    if ($FromLauncher -and $EnsureDriverOnly) {
         exit 0
     }
 

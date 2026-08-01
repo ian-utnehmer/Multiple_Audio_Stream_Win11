@@ -4,21 +4,21 @@ cd /d "%~dp0"
 
 if /i "%~1"=="--skip-driver-setup" goto python_setup
 
-where powershell >nul 2>nul
+where pyw >nul 2>nul
 if errorlevel 1 (
-  echo PowerShell was not found.
-  echo Driver auto-setup will be skipped.
-) else (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup_windows.ps1" -FromLauncher -EnsureDriverOnly
-  if errorlevel 100 (
-    exit /b 0
-  )
-  if errorlevel 1 (
-    echo Driver setup failed.
-    pause
-    exit /b 1
-  )
+  echo Python window launcher "pyw" was not found.
+  echo Install Python 3 from https://www.python.org/downloads/windows/ and enable "Add python.exe to PATH".
+  pause
+  exit /b 1
 )
+
+start "" pyw -3 "%CD%\launch_ui.py"
+if errorlevel 1 (
+  echo Failed to start the launcher UI.
+  pause
+  exit /b 1
+)
+exit /b 0
 
 :python_setup
 where py >nul 2>nul

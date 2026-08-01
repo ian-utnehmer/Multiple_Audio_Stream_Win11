@@ -55,7 +55,7 @@ Double-click:
 run_windows.bat
 ```
 
-On first launch, `run_windows.bat` checks whether `Splitter Output` is installed. If it is missing, the launcher runs the driver setup, elevates to administrator, installs/caches the result, and then starts the UI. Later launches use the cached/verified driver state and go straight to the UI.
+On launch, `run_windows.bat` opens a small `Launching` window first. The launcher checks whether `Splitter Output` is installed, prepares Python dependencies, and then opens the main UI. If the driver is missing, it elevates to administrator, installs/caches the result, and continues from there. Later launches use the cached/verified driver state and go straight through the loading window to the UI.
 
 For manual driver setup, double-click:
 
