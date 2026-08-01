@@ -30,5 +30,11 @@ if errorlevel 1 (
 )
 
 echo Starting Dual Output Router...
-".venv\Scripts\python.exe" dual_output_router.py
-pause
+start "" ".venv\Scripts\pythonw.exe" "%CD%\dual_output_router.py"
+if errorlevel 1 (
+  echo Failed to start Dual Output Router.
+  pause
+  exit /b 1
+)
+
+exit /b 0
