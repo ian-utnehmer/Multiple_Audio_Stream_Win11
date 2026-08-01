@@ -231,6 +231,7 @@ The setup script handles a known WDK validation-tool failure by retrying without
 - `requirements.txt`: Python dependencies
 - `web/`: React source and committed production build
 - `assets/audio_splitter.ico`: Windows window/taskbar icon
+- `web/public/audio_splitter.ico`: React app-window/favicon icon copied into the production build
 - `driver/`: optional virtual audio driver scripts and documentation
 
 Generated local files are ignored:

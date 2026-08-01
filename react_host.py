@@ -22,6 +22,7 @@ from audio_splitter import (
     DEFAULT_SAMPLE_RATE,
     DEVICE_REFRESH_MS,
     ERROR_LOG,
+    ICON_PATH,
     LIVE_RESTART_MS,
     NONE_LABEL,
     AudioRouter,
@@ -604,6 +605,7 @@ def _free_port() -> int:
 
 
 def run(open_mode: str) -> int:
+    _set_windows_app_identity()
     control = SplitterControl()
     shutdown_event = threading.Event()
     server = ThreadingHTTPServer(("127.0.0.1", _free_port()), _handler_factory(control, shutdown_event))
@@ -616,6 +618,8 @@ def run(open_mode: str) -> int:
             import webview
 
             start_options = {"gui": "edgechromium"} if sys.platform == "win32" else {}
+            if ICON_PATH.exists():
+                start_options["icon"] = str(ICON_PATH)
             webview.create_window(APP_TITLE, url, width=1180, height=760, min_size=(940, 660))
             webview.start(**start_options)
             shutdown_event.set()
@@ -633,6 +637,17 @@ def run(open_mode: str) -> int:
         server.shutdown()
         server.server_close()
     return 0
+
+
+def _set_windows_app_identity() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AudioSplitter.ReactApp")
+    except Exception:
+        pass
 
 
 def main() -> int:
