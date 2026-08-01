@@ -7,15 +7,18 @@ import time
 import traceback
 import tkinter as tk
 from dataclasses import dataclass
+from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Callable
 
 
 APP_TITLE = "Dual Output Router"
 DEFAULT_SAMPLE_RATE = 48000
-DEFAULT_BLOCK_SIZE = 1024
+DEFAULT_BLOCK_SIZE = 4096
 DEVICE_REFRESH_MS = 2000
 OUTPUT_QUEUE_BLOCKS = 8
+MAX_VOLUME = 5.0
+ERROR_LOG = Path(__file__).with_name("router_error.log")
 
 
 @dataclass(frozen=True)
@@ -57,8 +60,8 @@ class AudioRouter:
         self._queue_a: queue.Queue[object] = queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS)
         self._queue_b: queue.Queue[object] = queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS)
         self._volume_lock = threading.Lock()
-        self._volume_a = max(0.0, min(1.0, self._initial_volume_a()))
-        self._volume_b = max(0.0, min(1.0, self._initial_volume_b()))
+        self._volume_a = max(0.0, min(MAX_VOLUME, self._initial_volume_a()))
+        self._volume_b = max(0.0, min(MAX_VOLUME, self._initial_volume_b()))
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="audio-router", daemon=True)
@@ -78,8 +81,8 @@ class AudioRouter:
 
     def set_volumes(self, volume_a: float, volume_b: float) -> None:
         with self._volume_lock:
-            self._volume_a = max(0.0, min(1.0, float(volume_a)))
-            self._volume_b = max(0.0, min(1.0, float(volume_b)))
+            self._volume_a = max(0.0, min(MAX_VOLUME, float(volume_a)))
+            self._volume_b = max(0.0, min(MAX_VOLUME, float(volume_b)))
 
     def _run(self) -> None:
         try:
@@ -109,7 +112,7 @@ class AudioRouter:
                     self._enqueue_for_outputs(data)
                     self.frames_routed += int(data.shape[0])
         except Exception:
-            self.error_queue.put(traceback.format_exc())
+            self._report_error(traceback.format_exc())
         finally:
             self.stop_event.set()
             self._signal_outputs_to_stop()
@@ -157,7 +160,7 @@ class AudioRouter:
                     player.play(self._for_output(item, channels, volume))
         except Exception:
             if not self.stop_event.is_set():
-                self.error_queue.put(f"{label} failed:\n{traceback.format_exc()}")
+                self._report_error(f"{label} failed:\n{traceback.format_exc()}")
             self.stop_event.set()
 
     def _enqueue_for_outputs(self, data: object) -> None:
@@ -195,6 +198,15 @@ class AudioRouter:
         with self._volume_lock:
             return self._volume_a if label == "Output A" else self._volume_b
 
+    def _report_error(self, details: str) -> None:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with ERROR_LOG.open("a", encoding="utf-8") as log_file:
+                log_file.write(f"\n[{timestamp}]\n{details}\n")
+        except Exception:
+            pass
+        self.error_queue.put(details)
+
     @staticmethod
     def _initialize_com_for_thread(sc_module: object) -> object | None:
         try:
@@ -222,7 +234,7 @@ class AudioRouter:
     def _for_output(data, channels: int, volume: float):
         import numpy as np
 
-        volume = max(0.0, min(1.0, float(volume)))
+        volume = max(0.0, min(MAX_VOLUME, float(volume)))
         routed = np.asarray(data, dtype="float32")
         if routed.ndim == 1:
             routed = routed[:, None]
@@ -237,9 +249,13 @@ class AudioRouter:
             pad = np.zeros((routed.shape[0], channels - routed.shape[1]), dtype="float32")
             routed = np.concatenate([routed, pad], axis=1)
 
-        if volume == 1.0:
-            return routed
-        return np.clip(routed * volume, -1.0, 1.0).astype("float32", copy=False)
+        if volume != 1.0:
+            routed = routed * volume
+
+        peak = float(np.max(np.abs(routed))) if routed.size else 0.0
+        if peak > 1.0:
+            routed = np.tanh(routed)
+        return np.clip(routed, -1.0, 1.0).astype("float32", copy=False)
 
 
 class DualOutputApp(tk.Tk):
@@ -321,7 +337,7 @@ class DualOutputApp(tk.Tk):
         ttk.Combobox(
             settings,
             textvariable=self.block_size_var,
-            values=("512", "1024", "2048", "4096"),
+            values=("1024", "2048", "4096", "8192"),
             width=10,
             state="readonly",
         ).grid(row=0, column=3, sticky="w", pady=4)
@@ -365,7 +381,7 @@ class DualOutputApp(tk.Tk):
             value.configure(text=f"{int(var.get())}%")
 
         ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=8)
-        scale = ttk.Scale(parent, variable=var, from_=0, to=100, command=update_value)
+        scale = ttk.Scale(parent, variable=var, from_=0, to=500, command=update_value)
         scale.grid(row=row, column=1, sticky="ew", pady=8)
         value.grid(row=row, column=2, sticky="e", padx=(12, 0), pady=8)
         parent.columnconfigure(1, weight=1)
@@ -532,7 +548,12 @@ class DualOutputApp(tk.Tk):
             while not self.router.error_queue.empty():
                 details = self.router.error_queue.get_nowait()
                 self._stop_router()
-                messagebox.showerror(APP_TITLE, f"Audio routing stopped because of an error:\n\n{details}")
+                messagebox.showerror(
+                    APP_TITLE,
+                    "Audio routing stopped because of an error.\n\n"
+                    f"{details}\n\n"
+                    f"A copy was written to:\n{ERROR_LOG}",
+                )
                 break
 
             if self.router and self.router.is_alive():
