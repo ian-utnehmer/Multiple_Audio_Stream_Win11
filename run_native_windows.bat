@@ -1,0 +1,40 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+
+where py >nul 2>nul
+if errorlevel 1 (
+  echo Python launcher "py" was not found.
+  echo Install Python 3 from https://www.python.org/downloads/windows/ and enable "Add python.exe to PATH".
+  pause
+  exit /b 1
+)
+
+if not exist ".venv\Scripts\python.exe" (
+  echo Creating virtual environment...
+  py -3 -m venv .venv
+  if errorlevel 1 (
+    echo Failed to create the virtual environment.
+    pause
+    exit /b 1
+  )
+)
+
+echo Installing/updating dependencies...
+".venv\Scripts\python.exe" -m pip install --upgrade pip
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+if errorlevel 1 (
+  echo Dependency installation failed.
+  pause
+  exit /b 1
+)
+
+echo Starting native Audio Splitter UI...
+start "" ".venv\Scripts\pythonw.exe" "%CD%\audio_splitter.py"
+if errorlevel 1 (
+  echo Failed to start Audio Splitter.
+  pause
+  exit /b 1
+)
+
+exit /b 0

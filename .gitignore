@@ -6,3 +6,4 @@ __pycache__/
 driver/work/
 driver/out/
 driver/.cache/
+web/node_modules/

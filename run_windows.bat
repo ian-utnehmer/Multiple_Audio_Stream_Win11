@@ -48,8 +48,29 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if not exist "web\dist\index.html" (
+  where npm >nul 2>nul
+  if errorlevel 1 (
+    echo The React build is missing, and npm was not found.
+    echo Run the normal launcher or install Node.js to rebuild the interface.
+    pause
+    exit /b 1
+  )
+  echo Building React interface...
+  pushd web
+  npm install
+  npm run build
+  if errorlevel 1 (
+    popd
+    echo React build failed.
+    pause
+    exit /b 1
+  )
+  popd
+)
+
 echo Starting Audio Splitter...
-start "" ".venv\Scripts\pythonw.exe" "%CD%\audio_splitter.py"
+start "" ".venv\Scripts\pythonw.exe" "%CD%\react_host.py"
 if errorlevel 1 (
   echo Failed to start Audio Splitter.
   pause

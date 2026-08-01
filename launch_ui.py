@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -17,6 +18,8 @@ LOG_FILE = ROOT / "launcher_error.log"
 ICON_PATH = ROOT / "assets" / "audio_splitter.ico"
 VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 VENV_PYTHONW = ROOT / ".venv" / "Scripts" / "pythonw.exe"
+WEB_DIR = ROOT / "web"
+WEB_DIST_INDEX = WEB_DIR / "dist" / "index.html"
 
 
 class Launcher(tk.Tk):
@@ -88,6 +91,10 @@ class Launcher(tk.Tk):
             self._install_requirements()
             self._stop_if_cancelled()
 
+            self._status("Preparing React interface...")
+            self._ensure_react_build()
+            self._stop_if_cancelled()
+
             self._status("Opening audio splitter...")
             self._launch_app()
             self._done()
@@ -105,18 +112,30 @@ class Launcher(tk.Tk):
         self._run([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"])
         self._run([str(VENV_PYTHON), "-m", "pip", "install", "-r", str(ROOT / "requirements.txt")])
 
+    def _ensure_react_build(self) -> None:
+        if WEB_DIST_INDEX.exists():
+            return
+        npm = shutil.which("npm")
+        if not npm:
+            raise RuntimeError(
+                "The React build is missing, and npm was not found. Restore web\\dist from the repo "
+                "or install Node.js to rebuild the interface."
+            )
+        self._run([npm, "install"], cwd=WEB_DIR)
+        self._run([npm, "run", "build"], cwd=WEB_DIR)
+
     def _launch_app(self) -> None:
         subprocess.Popen(
-            [str(VENV_PYTHONW), str(ROOT / "audio_splitter.py")],
+            [str(VENV_PYTHONW), str(ROOT / "react_host.py")],
             cwd=str(ROOT),
             close_fds=True,
             creationflags=self._creation_flags(),
         )
 
-    def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+    def _run(self, args: list[str], cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             args,
-            cwd=str(ROOT),
+            cwd=str(cwd),
             text=True,
             capture_output=True,
             creationflags=self._creation_flags(),
