@@ -7,7 +7,7 @@ It has one unified release with two modes:
 - **No-driver mode:** the default path. Capture an existing Windows playback device through WASAPI loopback and mirror it to as many additional outputs as your PC can handle.
 - **Optional-driver mode:** installs a locally built virtual endpoint named `Splitter Output` so Windows, games, or individual apps can choose that endpoint directly.
 
-The main audio engine is designed to stay current: it reads the newest available loopback audio, skips stale queued blocks instead of drifting behind, and applies per-output volume changes immediately.
+The main audio engine is designed to stay current: it reads fixed-size loopback blocks, plays them in order through a tiny low-latency jitter buffer, resyncs only when an output truly falls behind, and applies per-output volume changes immediately.
 
 The default interface is a React control surface served by a local Python host. The same host owns the Windows audio routing engine, so the UI can update device choices, volumes, and routing state without replacing the low-latency audio path. A native CustomTkinter fallback is also included.
 
@@ -29,7 +29,7 @@ This app also came from frustration with the driver-heavy setup and cleanup proc
 - Keep the device list refreshed while the app is open.
 - Stop routing if a selected device disappears.
 - Use a modern React UI with styled scrollbars, segmented controls, and responsive routing controls.
-- Avoid software backlog by keeping only the newest audio block per output.
+- Avoid runaway software backlog with a bounded low-latency jitter buffer per output.
 - Provide a no-driver default mode for the cleanest day-to-day use.
 - Provide an optional virtual driver mode for a selectable Windows endpoint named `Splitter Output`.
 
@@ -136,17 +136,17 @@ After installation:
 Recommended starting point:
 
 - Sample rate: `48000`
-- Block size: `512`
+- Block size: `256`
 
 Tuning:
 
-- Try `256` or `128` for lower software latency.
+- Try `128` or `64` for lower software latency.
 - Try `1024` or `2048` if you hear crackles.
 - Use `4096` only if smaller values are unstable.
 - Bluetooth devices add hardware/codec delay that software cannot remove.
 - Avoid selecting the same physical device as both the capture source and an additional output.
 
-The app uses one queue per output and keeps only the newest pending audio block. If an output device falls behind, old blocks are dropped so playback stays current instead of becoming seconds late.
+The app uses one tiny queue per output and plays queued audio blocks in order. This avoids the fuzzy sound caused by constantly throwing away blocks during normal playback. If an output device falls behind badly enough to fill its queue, the oldest pending block is dropped as a resync so playback stays current instead of becoming seconds late.
 
 ## Volume Behavior
 
@@ -200,13 +200,13 @@ See [driver/README.md](driver/README.md) for the driver-specific build, install,
 - Do not route back into the same physical device you are capturing.
 - In no-driver mode, let the source device play normally and route only to the other devices.
 - Lower `Main output volume` if the input is already hot.
-- Try `48000` Hz and block size `512`, then adjust from there.
+- Try `48000` Hz and block size `256`, then adjust from there.
 
 ### Audio is delayed
 
-- Use a smaller block size such as `256` or `128`.
+- Use a smaller block size such as `128` or `64`.
 - Avoid Bluetooth if you need very low latency.
-- Watch for stale block counts in the status line; the app drops stale blocks to stay current.
+- Watch for resync counts in the status line; frequent resyncs mean that device, sample rate, block size, or CPU load cannot keep up cleanly.
 
 ### Driver setup says test-signing is blocked
 

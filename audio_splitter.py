@@ -18,11 +18,12 @@ import customtkinter as ctk
 APP_TITLE = "Audio Splitter"
 APP_USER_MODEL_ID = "AudioSplitter.App"
 DEFAULT_SAMPLE_RATE = 48000
-DEFAULT_BLOCK_SIZE = 512
+DEFAULT_BLOCK_SIZE = 256
 DEVICE_REFRESH_MS = 1500
 LIVE_RESTART_MS = 75
-OUTPUT_QUEUE_BLOCKS = 1
-STARTUP_DISCARD_SECONDS = 0.12
+TARGET_QUEUE_LATENCY_SECONDS = 0.03
+MAX_OUTPUT_QUEUE_BLOCKS = 6
+STARTUP_DISCARD_SECONDS = 0.04
 MAX_VOLUME = 5.0
 ERROR_LOG = Path(__file__).with_name("audio_splitter_error.log")
 ICON_PATH = Path(__file__).with_name("assets") / "audio_splitter.ico"
@@ -78,8 +79,9 @@ class AudioRouter:
         self.frames_routed = 0
         self._thread: threading.Thread | None = None
         self._output_threads: list[threading.Thread] = []
+        self.output_queue_blocks = self._queue_block_count(sample_rate, block_size)
         self._output_queues: list[queue.Queue[object]] = [
-            queue.Queue(maxsize=OUTPUT_QUEUE_BLOCKS) for _route in self.output_routes
+            queue.Queue(maxsize=self.output_queue_blocks) for _route in self.output_routes
         ]
         self._volume_lock = threading.Lock()
         self._master_volume = self._read_master_volume(master_volume)
@@ -123,14 +125,14 @@ class AudioRouter:
             ) as recorder:
                 self._discard_startup_audio(recorder)
                 while not self.stop_event.is_set():
-                    data = recorder.record(numframes=None)
+                    data = recorder.record(numframes=self.block_size)
                     if data.size == 0:
                         time.sleep(0.001)
                         continue
 
                     self.level = float(min(1.0, math.sqrt(float(np.mean(np.square(data)))) * 4.0))
                     self.peak = float(min(1.0, np.max(np.abs(data))))
-                    self._enqueue_latest(data)
+                    self._enqueue_audio(data)
                     self.frames_routed += int(data.shape[0])
         except Exception:
             self._report_error(traceback.format_exc())
@@ -175,43 +177,45 @@ class AudioRouter:
                     if item is None:
                         break
 
-                    item = self._drain_to_latest(output_queue, item)
                     player.play(self._for_output(item, channels, self._volume_for(output_index)))
         except Exception:
             if not self.stop_event.is_set():
                 self._report_error(f"Output {output_index + 1} failed:\n{traceback.format_exc()}")
             self.stop_event.set()
 
-    def _enqueue_latest(self, data: object) -> None:
+    def _enqueue_audio(self, data: object) -> None:
         for route, output_queue in zip(self.output_routes, self._output_queues):
             if not route.device.is_none:
-                self._put_latest(output_queue, data)
+                self._put_realtime(output_queue, data)
 
-    def _put_latest(self, output_queue: queue.Queue[object], data: object) -> None:
-        while True:
-            try:
-                stale = output_queue.get_nowait()
-            except queue.Empty:
-                break
-            if stale is not None:
-                self.skipped_blocks += 1
+    def _put_realtime(self, output_queue: queue.Queue[object], data: object) -> None:
+        try:
+            output_queue.put_nowait(data)
+            return
+        except queue.Full:
+            pass
 
+        if not self._drop_oldest_pending(output_queue):
+            return
         try:
             output_queue.put_nowait(data)
         except queue.Full:
             self.skipped_blocks += 1
 
-    def _drain_to_latest(self, output_queue: queue.Queue[object], item: object) -> object:
-        while True:
+    def _drop_oldest_pending(self, output_queue: queue.Queue[object]) -> bool:
+        try:
+            pending = output_queue.get_nowait()
+        except queue.Empty:
+            return True
+        if pending is None:
+            self.stop_event.set()
             try:
-                newer_item = output_queue.get_nowait()
-            except queue.Empty:
-                return item
-            if newer_item is None:
-                self.stop_event.set()
-                return item
-            item = newer_item
-            self.skipped_blocks += 1
+                output_queue.put_nowait(None)
+            except queue.Full:
+                pass
+            return False
+        self.skipped_blocks += 1
+        return True
 
     def _signal_outputs_to_stop(self) -> None:
         for output_queue in self._output_queues:
@@ -234,7 +238,7 @@ class AudioRouter:
         deadline = time.perf_counter() + STARTUP_DISCARD_SECONDS
         while not self.stop_event.is_set() and time.perf_counter() < deadline:
             try:
-                recorder.record(numframes=None)
+                recorder.record(numframes=self.block_size)
             except Exception:
                 return
 
@@ -265,6 +269,13 @@ class AudioRouter:
         except Exception:
             return 2
         return 1 if count <= 1 else 2
+
+    @staticmethod
+    def _queue_block_count(sample_rate: int, block_size: int) -> int:
+        if sample_rate <= 0 or block_size <= 0:
+            return 3
+        target_blocks = math.ceil((sample_rate * TARGET_QUEUE_LATENCY_SECONDS) / block_size)
+        return max(1, min(MAX_OUTPUT_QUEUE_BLOCKS, target_blocks))
 
     @staticmethod
     def _read_volume(volume: tk.DoubleVar) -> float:
@@ -546,7 +557,7 @@ class AudioSplitterApp(ctk.CTk):
         self.block_size_combo = ctk.CTkSegmentedButton(
             settings_content,
             variable=self.block_size_var,
-            values=["128", "256", "512", "1024", "2048", "4096"],
+            values=["64", "128", "256", "512", "1024", "2048", "4096"],
             command=lambda _value: self._schedule_live_restart("block size"),
             height=34,
             corner_radius=9,
@@ -996,7 +1007,7 @@ class AudioSplitterApp(ctk.CTk):
             if self.router and self.router.is_alive():
                 self._set_level(self.router.level)
                 seconds = self.router.frames_routed / max(1, int(self.sample_rate_var.get()))
-                skip_text = f", {self.router.skipped_blocks} stale block(s) skipped" if self.router.skipped_blocks else ""
+                skip_text = f", {self.router.skipped_blocks} resync block(s)" if self.router.skipped_blocks else ""
                 peak_text = ", hot input" if self.router.peak > 0.98 else ""
                 self.status_var.set(f"Routing current audio... {seconds:,.1f}s processed{skip_text}{peak_text}")
             elif self.router:

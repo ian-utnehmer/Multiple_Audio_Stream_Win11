@@ -184,7 +184,8 @@ function App() {
             <div style={meterStyle} />
           </div>
           <p>{state?.status}</p>
-          {state?.routing.skippedBlocks > 0 && <span>{state.routing.skippedBlocks} stale block(s) skipped</span>}
+          {state?.routing.queueBlocks > 0 && <span>Jitter buffer: {state.routing.queueBlocks} block(s)</span>}
+          {state?.routing.resyncBlocks > 0 && <span>{state.routing.resyncBlocks} resync block(s)</span>}
         </div>
 
         <button className="quiet" onClick={() => run("Shutting down", API.shutdown)}>
@@ -275,7 +276,7 @@ function App() {
             <SegmentGroup
               label="Block size"
               value={String(state.settings.blockSize)}
-              options={["128", "256", "512", "1024", "2048", "4096"]}
+              options={["64", "128", "256", "512", "1024", "2048", "4096"]}
               onChange={(value) => updateOptimistic({ blockSize: Number(value) })}
             />
           </div>

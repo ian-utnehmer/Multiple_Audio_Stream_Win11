@@ -114,6 +114,8 @@ class SplitterControl:
                     "peak": self.router.peak if running and self.router else 0,
                     "seconds": seconds if running else 0,
                     "skippedBlocks": self.router.skipped_blocks if running and self.router else 0,
+                    "resyncBlocks": self.router.skipped_blocks if running and self.router else 0,
+                    "queueBlocks": self.router.output_queue_blocks if self.router else 0,
                 },
                 "status": self.status,
                 "lastError": self.last_error,
@@ -215,6 +217,8 @@ class SplitterControl:
                 "peak": self.router.peak if running and self.router else 0,
                 "seconds": seconds if running else 0,
                 "skippedBlocks": self.router.skipped_blocks if running and self.router else 0,
+                "resyncBlocks": self.router.skipped_blocks if running and self.router else 0,
+                "queueBlocks": self.router.output_queue_blocks if self.router else 0,
             },
             "status": self.status,
             "lastError": self.last_error,
@@ -386,7 +390,7 @@ class SplitterControl:
             break
         if self.router and self.router.is_alive():
             seconds = self.router.frames_routed / max(1, self.sample_rate)
-            skip_text = f", {self.router.skipped_blocks} stale block(s) skipped" if self.router.skipped_blocks else ""
+            skip_text = f", {self.router.skipped_blocks} resync block(s)" if self.router.skipped_blocks else ""
             peak_text = ", hot input" if self.router.peak > 0.98 else ""
             self.status = f"Routing current audio... {seconds:,.1f}s processed{skip_text}{peak_text}"
         elif self.router:
