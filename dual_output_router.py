@@ -16,6 +16,7 @@ APP_TITLE = "Dual Output Router"
 DEFAULT_SAMPLE_RATE = 48000
 DEFAULT_BLOCK_SIZE = 4096
 DEVICE_REFRESH_MS = 2000
+LIVE_RESTART_MS = 75
 OUTPUT_QUEUE_BLOCKS = 1
 MAX_VOLUME = 5.0
 ERROR_LOG = Path(__file__).with_name("router_error.log")
@@ -287,6 +288,7 @@ class DualOutputApp(tk.Tk):
         self.outputs: list[DeviceChoice] = []
         self.router: AudioRouter | None = None
         self.device_signature: tuple[tuple[str, str, bool], ...] = ()
+        self.live_restart_after_id: str | None = None
 
         self.source_var = tk.StringVar()
         self.output_a_var = tk.StringVar()
@@ -298,6 +300,9 @@ class DualOutputApp(tk.Tk):
         self.allow_feedback_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Choose devices, then press Start.")
         self.level_var = tk.DoubleVar(value=0)
+
+        self.volume_a_var.trace_add("write", lambda *_args: self._apply_live_volumes())
+        self.volume_b_var.trace_add("write", lambda *_args: self._apply_live_volumes())
 
         self._build_ui()
         self.refresh_devices()
@@ -345,25 +350,32 @@ class DualOutputApp(tk.Tk):
         settings = ttk.Frame(root, style="Panel.TFrame", padding=14)
         settings.pack(fill="x", pady=(0, 12))
         ttk.Label(settings, text="Sample rate", style="Panel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
-        ttk.Combobox(
+        self.sample_rate_combo = ttk.Combobox(
             settings,
             textvariable=self.sample_rate_var,
             values=("44100", "48000"),
             width=10,
             state="readonly",
-        ).grid(row=0, column=1, sticky="w", pady=4)
+        )
+        self.sample_rate_combo.grid(row=0, column=1, sticky="w", pady=4)
+        self.sample_rate_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("sample rate"))
+
         ttk.Label(settings, text="Block size", style="Panel.TLabel").grid(row=0, column=2, sticky="w", padx=(24, 12), pady=4)
-        ttk.Combobox(
+        self.block_size_combo = ttk.Combobox(
             settings,
             textvariable=self.block_size_var,
             values=("1024", "2048", "4096", "8192"),
             width=10,
             state="readonly",
-        ).grid(row=0, column=3, sticky="w", pady=4)
+        )
+        self.block_size_combo.grid(row=0, column=3, sticky="w", pady=4)
+        self.block_size_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart("block size"))
+
         ttk.Checkbutton(
             settings,
             text="Allow routing back into the captured output device",
             variable=self.allow_feedback_var,
+            command=lambda: self._schedule_live_restart("feedback setting"),
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         note = (
@@ -390,6 +402,7 @@ class DualOutputApp(tk.Tk):
         ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
         combo = ttk.Combobox(parent, textvariable=var, state="readonly", width=88)
         combo.grid(row=row, column=1, sticky="ew", pady=6)
+        combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_live_restart(label.lower()))
         parent.columnconfigure(1, weight=1)
         setattr(self, attr_name, combo)
 
@@ -398,12 +411,17 @@ class DualOutputApp(tk.Tk):
 
         def update_value(_event=None) -> None:
             value.configure(text=f"{int(var.get())}%")
+            self._apply_live_volumes()
 
         ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=8)
         scale = ttk.Scale(parent, variable=var, from_=0, to=500, command=update_value)
         scale.grid(row=row, column=1, sticky="ew", pady=8)
         value.grid(row=row, column=2, sticky="e", padx=(12, 0), pady=8)
         parent.columnconfigure(1, weight=1)
+
+    def _apply_live_volumes(self) -> None:
+        if self.router and self.router.is_alive():
+            self.router.set_volumes(self.volume_a_var.get() / 100.0, self.volume_b_var.get() / 100.0)
 
     def refresh_devices(self, silent: bool = False) -> bool:
         try:
@@ -515,16 +533,23 @@ class DualOutputApp(tk.Tk):
             self._stop_router()
             return
 
+        self._start_router()
+
+    def _start_router(self) -> bool:
+        if self.live_restart_after_id:
+            self.after_cancel(self.live_restart_after_id)
+            self.live_restart_after_id = None
+
         source = self._selected(self.sources, self.source_var.get())
         output_a = self._selected(self.outputs, self.output_a_var.get())
         output_b = self._selected(self.outputs, self.output_b_var.get())
 
         if not source or not output_a or not output_b:
             messagebox.showwarning(APP_TITLE, "Choose one capture source and two output devices.")
-            return
+            return False
         if output_a.id == output_b.id:
             messagebox.showwarning(APP_TITLE, "Output A and Output B need to be different devices.")
-            return
+            return False
         if source.is_loopback and source.id in {output_a.id, output_b.id} and not self.allow_feedback_var.get():
             messagebox.showwarning(
                 APP_TITLE,
@@ -532,14 +557,14 @@ class DualOutputApp(tk.Tk):
                 "That can route the app's own playback back into itself and create echo or feedback. "
                 "Use a separate capture endpoint, or enable the checkbox if you really want to test it.",
             )
-            return
+            return False
 
         try:
             sample_rate = int(self.sample_rate_var.get())
             block_size = int(self.block_size_var.get())
         except ValueError:
             messagebox.showwarning(APP_TITLE, "Sample rate and block size must be numbers.")
-            return
+            return False
 
         self.router = AudioRouter(
             source=source,
@@ -554,14 +579,35 @@ class DualOutputApp(tk.Tk):
         self.router.start()
         self.start_button.configure(text="Stop")
         self.status_var.set("Routing audio...")
+        return True
 
-    def _stop_router(self) -> None:
+    def _stop_router(self, status: str = "Stopped.") -> None:
+        if self.live_restart_after_id:
+            self.after_cancel(self.live_restart_after_id)
+            self.live_restart_after_id = None
         if self.router:
             self.router.stop()
         self.router = None
         self.level_var.set(0)
         self.start_button.configure(text="Start")
-        self.status_var.set("Stopped.")
+        self.status_var.set(status)
+
+    def _schedule_live_restart(self, reason: str) -> None:
+        if not self.router or not self.router.is_alive():
+            return
+
+        self.status_var.set(f"Applying {reason}...")
+        if self.live_restart_after_id:
+            self.after_cancel(self.live_restart_after_id)
+        self.live_restart_after_id = self.after(LIVE_RESTART_MS, self._restart_router)
+
+    def _restart_router(self) -> None:
+        self.live_restart_after_id = None
+        if not self.router or not self.router.is_alive():
+            return
+
+        self._stop_router(status="Restarting audio...")
+        self._start_router()
 
     def _poll_router(self) -> None:
         if self.router:
@@ -577,7 +623,6 @@ class DualOutputApp(tk.Tk):
                 break
 
             if self.router and self.router.is_alive():
-                self.router.set_volumes(self.volume_a_var.get() / 100.0, self.volume_b_var.get() / 100.0)
                 self.level_var.set(self.router.level * 100)
                 seconds = self.router.frames_routed / max(1, int(self.sample_rate_var.get()))
                 drop_text = f", {self.router.dropped_blocks} stale block(s) skipped" if self.router.dropped_blocks else ""

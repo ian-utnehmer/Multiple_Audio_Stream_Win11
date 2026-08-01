@@ -7,6 +7,8 @@ A small Windows Python app that captures an audio stream and plays it to two dif
 - Pick a capture source, usually a Windows WASAPI loopback source.
 - Pick two different playback devices, such as a wired headset and Bluetooth earbuds.
 - Control each routed output's volume separately.
+- Apply volume slider changes immediately while routing.
+- Restart the audio stream automatically when source, output, sample rate, or block size changes.
 - Keep the device lists current while the app is open.
 - Stop routing with a warning if a selected device disconnects.
 - Route each output through its own playback worker and skip stale audio blocks so output stays live instead of drifting behind.
