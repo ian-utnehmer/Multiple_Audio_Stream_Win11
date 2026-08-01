@@ -13,6 +13,8 @@ Windows lets you choose an output device and app volume in Volume Mixer, but it 
 
 [Voicemeeter](https://vb-audio.com/Voicemeeter/) is a powerful, actively maintained virtual mixer, and its Banana/Potato editions support multiple outputs and bus controls. This project is intentionally narrower: a lightweight splitter UI focused on quickly sending the same current audio to any number of selected outputs, each with its own instant volume control, without requiring a virtual driver unless the user explicitly wants a dedicated `Splitter Output` device.
 
+This app also came from frustration with the driver-heavy setup and cleanup process around virtual mixer tools. In my own testing, uninstalling and reinstalling Voicemeeter multiple times still left Windows believing pieces were installed, including old virtual drivers/cables that were not removed cleanly. Audio Splitter keeps the default path driver-free, and makes the virtual-driver path optional and explicit.
+
 ## Run
 
 Use native Windows Python, not WSL. WSL cannot reliably see Windows audio devices.
