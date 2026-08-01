@@ -59,6 +59,38 @@ function Add-CertToStore($Cert, [string]$StoreName) {
     }
 }
 
+function Find-PackageCertificate([string]$PackageDir) {
+    $packagePath = Resolve-Path $PackageDir
+    $releaseDir = Split-Path -Parent $packagePath
+    $candidates = @(
+        (Join-Path $PackageDir "package.cer"),
+        (Join-Path $releaseDir "package.cer")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    $match = Get-ChildItem -Path $PackageDir, $releaseDir -Filter "*.cer" -ErrorAction SilentlyContinue |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if ($match) {
+        return $match.FullName
+    }
+
+    return $null
+}
+
+function Import-CertificateFile([string]$Path) {
+    Write-Host "Trusting driver package certificate:"
+    Write-Host "  $Path"
+    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($Path)
+    Add-CertToStore -Cert $cert -StoreName "Root"
+    Add-CertToStore -Cert $cert -StoreName "TrustedPublisher"
+}
+
 Assert-Admin
 
 $inf = Get-ChildItem -Path $PackageDir -Filter "*.inf" -ErrorAction Stop | Select-Object -First 1
@@ -72,29 +104,34 @@ if ($EnableTestSigning) {
     & bcdedit /set testsigning on
 }
 
-$cert = Get-ChildItem Cert:\LocalMachine\My |
-    Where-Object { $_.Subject -eq "CN=$CertSubject" } |
-    Sort-Object NotAfter -Descending |
-    Select-Object -First 1
+$packageCertificate = Find-PackageCertificate -PackageDir $PackageDir
+if ($packageCertificate) {
+    Import-CertificateFile -Path $packageCertificate
+} else {
+    $cert = Get-ChildItem Cert:\LocalMachine\My |
+        Where-Object { $_.Subject -eq "CN=$CertSubject" } |
+        Sort-Object NotAfter -Descending |
+        Select-Object -First 1
 
-if (-not $cert) {
-    $cert = New-SelfSignedCertificate `
-        -Type CodeSigningCert `
-        -Subject "CN=$CertSubject" `
-        -CertStoreLocation Cert:\LocalMachine\My `
-        -KeyAlgorithm RSA `
-        -KeyLength 2048 `
-        -HashAlgorithm SHA256 `
-        -NotAfter (Get-Date).AddYears(5)
-}
+    if (-not $cert) {
+        $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=$CertSubject" `
+            -CertStoreLocation Cert:\LocalMachine\My `
+            -KeyAlgorithm RSA `
+            -KeyLength 2048 `
+            -HashAlgorithm SHA256 `
+            -NotAfter (Get-Date).AddYears(5)
+    }
 
-Add-CertToStore -Cert $cert -StoreName "Root"
-Add-CertToStore -Cert $cert -StoreName "TrustedPublisher"
+    Add-CertToStore -Cert $cert -StoreName "Root"
+    Add-CertToStore -Cert $cert -StoreName "TrustedPublisher"
 
-$signtool = Find-Tool "signtool.exe"
-& $signtool sign /v /fd SHA256 /s My /n $CertSubject $($cat.FullName)
-if ($LASTEXITCODE -ne 0) {
-    throw "signtool failed with exit code $LASTEXITCODE."
+    $signtool = Find-Tool "signtool.exe"
+    & $signtool sign /v /fd SHA256 /s My /n $CertSubject $($cat.FullName)
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool failed with exit code $LASTEXITCODE."
+    }
 }
 
 $devcon = Find-Tool "devcon.exe"
